@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Clock, Baby, Milk, Moon, Bath, Wind, Droplets, Pill, Plus, BarChart3, ChevronLeft, Play, Pause, Save } from 'lucide-react';
 
 const ActivityTracker = () => {
@@ -8,6 +8,7 @@ const ActivityTracker = () => {
   const [timers, setTimers] = useState({});
   const [formData, setFormData] = useState({});
   const [tg, setTg] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   // Инициализация Telegram WebApp
   useEffect(() => {
@@ -17,17 +18,14 @@ const ActivityTracker = () => {
       telegram.expand();
       telegram.enableClosingConfirmation();
       
-      // Устанавливаем цвет темы
       telegram.setHeaderColor('#9333ea');
       telegram.setBackgroundColor('#faf5ff');
       
       setTg(telegram);
       
-      // Настройка главной кнопки
       telegram.MainButton.setText('Добавить активность');
       telegram.MainButton.hide();
       
-      // Настройка кнопки "Назад"
       telegram.BackButton.onClick(() => {
         if (view !== 'main') {
           setView('main');
@@ -37,9 +35,95 @@ const ActivityTracker = () => {
       });
     }
 
-    // Загрузка данных из storage
     loadData();
   }, []);
+
+  // Функция загрузки данных из Telegram Cloud Storage
+  const loadData = useCallback(async () => {
+    setIsLoading(true);
+    
+    if (window.Telegram?.WebApp?.CloudStorage) {
+      try {
+        // Загружаем активности
+        window.Telegram.WebApp.CloudStorage.getItem('baby_activities', (error, value) => {
+          if (!error && value) {
+            try {
+              const parsed = JSON.parse(value);
+              setActivities(parsed);
+              console.log('Загружено активностей:', parsed.length);
+            } catch (e) {
+              console.error('Ошибка парсинга активностей:', e);
+            }
+          }
+        });
+
+        // Загружаем таймеры
+        window.Telegram.WebApp.CloudStorage.getItem('active_timers', (error, value) => {
+          if (!error && value) {
+            try {
+              const parsed = JSON.parse(value);
+              setTimers(parsed);
+              console.log('Загружены таймеры:', parsed);
+            } catch (e) {
+              console.error('Ошибка парсинга таймеров:', e);
+            }
+          }
+          setIsLoading(false);
+        });
+      } catch (error) {
+        console.error('Ошибка загрузки данных:', error);
+        setIsLoading(false);
+      }
+    } else {
+      // Fallback на localStorage если CloudStorage недоступен
+      try {
+        const savedActivities = localStorage.getItem('baby_activities');
+        const savedTimers = localStorage.getItem('active_timers');
+        
+        if (savedActivities) {
+          setActivities(JSON.parse(savedActivities));
+        }
+        if (savedTimers) {
+          setTimers(JSON.parse(savedTimers));
+        }
+      } catch (e) {
+        console.error('Ошибка загрузки из localStorage:', e);
+      }
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Функция сохранения данных в Telegram Cloud Storage
+  const saveToCloud = useCallback((key, value) => {
+    if (window.Telegram?.WebApp?.CloudStorage) {
+      window.Telegram.WebApp.CloudStorage.setItem(key, JSON.stringify(value), (error, success) => {
+        if (error) {
+          console.error(`Ошибка сохранения ${key}:`, error);
+          // Fallback на localStorage
+          localStorage.setItem(key, JSON.stringify(value));
+        } else {
+          console.log(`Сохранено ${key}:`, success);
+        }
+      });
+    } else {
+      // Fallback на localStorage
+      localStorage.setItem(key, JSON.stringify(value));
+    }
+  }, []);
+
+  // Сохранение активностей при изменении
+  useEffect(() => {
+    if (!isLoading && activities.length >= 0) {
+      saveToCloud('baby_activities', activities);
+    }
+  }, [activities, isLoading, saveToCloud]);
+
+  // Сохранение таймеров при изменении
+  useEffect(() => {
+    if (!isLoading && Object.keys(timers).length >= 0) {
+      saveToCloud('active_timers', timers);
+    }
+  }, [timers, isLoading, saveToCloud]);
 
   // Управление кнопками Telegram
   useEffect(() => {
@@ -65,41 +149,7 @@ const ActivityTracker = () => {
         tg.MainButton.offClick(saveActivity);
       }
     };
-  }, [view, tg, formData]);
-
-  // Загрузка данных
-  const loadData = async () => {
-    try {
-      const activitiesResult = await window.storage.get('baby_activities');
-      if (activitiesResult?.value) {
-        setActivities(JSON.parse(activitiesResult.value));
-      }
-      
-      const timersResult = await window.storage.get('active_timers');
-      if (timersResult?.value) {
-        setTimers(JSON.parse(timersResult.value));
-      }
-    } catch (error) {
-      console.log('Данные не найдены, начинаем с чистого листа');
-    }
-  };
-
-  // Сохранение данных
-  useEffect(() => {
-    if (activities.length > 0) {
-      window.storage?.set('baby_activities', JSON.stringify(activities)).catch(err => {
-        console.error('Ошибка сохранения активностей:', err);
-      });
-    }
-  }, [activities]);
-
-  useEffect(() => {
-    if (Object.keys(timers).length > 0) {
-      window.storage?.set('active_timers', JSON.stringify(timers)).catch(err => {
-        console.error('Ошибка сохранения таймеров:', err);
-      });
-    }
-  }, [timers]);
+  }, [view, tg]);
 
   // Обновление таймеров
   useEffect(() => {
@@ -211,7 +261,12 @@ const ActivityTracker = () => {
       newActivity.endTime = new Date().toISOString();
     }
 
-    setActivities(prev => [newActivity, ...prev]);
+    setActivities(prev => {
+      const updated = [newActivity, ...prev];
+      console.log('Сохранение новой активности, всего:', updated.length);
+      return updated;
+    });
+    
     setView('main');
     setSelectedActivity(null);
     setFormData({});
@@ -238,6 +293,17 @@ const ActivityTracker = () => {
     
     return stats;
   };
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Загрузка...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (view === 'add' && selectedActivity) {
     const ActivityIcon = activityTypes[selectedActivity].icon;
@@ -494,7 +560,7 @@ const ActivityTracker = () => {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6">
-          <h2 className="text-lg font-semibold mb-4">Последние записи</h2>
+          <h2 className="text-lg font-semibold mb-4">Последние записи ({activities.length})</h2>
           <div className="space-y-3">
             {activities.slice(0, 10).map(activity => {
               const ActivityIcon = activityTypes[activity.type].icon;
