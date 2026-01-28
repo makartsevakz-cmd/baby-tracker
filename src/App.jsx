@@ -147,20 +147,23 @@ const ActivityTracker = () => {
     };
 
     if (formData.type === 'breastfeeding') {
-      let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : getTotalDuration('left');
-      let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : getTotalDuration('right');
+      let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : (editingId ? 0 : getTotalDuration('left'));
+      let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : (editingId ? 0 : getTotalDuration('right'));
 
       activityData.leftDuration = leftDuration;
       activityData.rightDuration = rightDuration;
       activityData.endTime = new Date(new Date(formData.startTime).getTime() + (leftDuration + rightDuration) * 1000).toISOString();
       
-      resetTimer('left');
-      resetTimer('right');
+      if (!editingId) {
+        resetTimer('left');
+        resetTimer('right');
+      }
     } else if (formData.type === 'sleep' || formData.type === 'walk') {
-      if (timers.main || pausedTimers.main) {
-        const duration = getTotalDuration('main');
+      const timerKey = formData.type;
+      if (!editingId && (timers[timerKey] || pausedTimers[timerKey])) {
+        const duration = getTotalDuration(timerKey);
         activityData.endTime = new Date(new Date(formData.startTime).getTime() + duration * 1000).toISOString();
-        resetTimer('main');
+        resetTimer(timerKey);
       } else if (formData.endTime) {
         activityData.endTime = formData.endTime;
       } else {
@@ -200,22 +203,33 @@ const ActivityTracker = () => {
   const getActiveTimers = () => {
     const activeTimers = [];
     
-    Object.keys(timers).forEach(key => {
-      if (key === 'left' || key === 'right') {
-        const existing = activeTimers.find(t => t.type === 'breastfeeding');
-        if (existing) {
-          existing.timers.push(key);
-        } else {
-          activeTimers.push({ type: 'breastfeeding', timers: [key] });
-        }
-      } else if (key === 'main') {
-        if (selectedActivity === 'sleep') {
-          activeTimers.push({ type: 'sleep', timers: ['main'] });
-        } else if (selectedActivity === 'walk') {
-          activeTimers.push({ type: 'walk', timers: ['main'] });
-        }
-      }
-    });
+    // Проверяем кормление грудью
+    if (timers.left || timers.right || pausedTimers.left || pausedTimers.right) {
+      activeTimers.push({ 
+        type: 'breastfeeding', 
+        timers: ['left', 'right'],
+        leftTime: getTotalDuration('left'),
+        rightTime: getTotalDuration('right')
+      });
+    }
+    
+    // Проверяем сон
+    if (timers.sleep || pausedTimers.sleep) {
+      activeTimers.push({ 
+        type: 'sleep', 
+        timers: ['sleep'],
+        time: getTotalDuration('sleep')
+      });
+    }
+    
+    // Проверяем прогулку
+    if (timers.walk || pausedTimers.walk) {
+      activeTimers.push({ 
+        type: 'walk', 
+        timers: ['walk'],
+        time: getTotalDuration('walk')
+      });
+    }
     
     return activeTimers;
   };
@@ -325,18 +339,20 @@ const ActivityTracker = () => {
     setView('add');
   };
 
-  const startTimer = (timerType) => {
+  const startTimer = (timerType, activityType) => {
     if (tg) tg.HapticFeedback?.impactOccurred('medium');
-    setTimers(prev => ({ ...prev, [timerType]: Date.now() - (pausedTimers[timerType] || 0) }));
+    const key = activityType === 'sleep' ? 'sleep' : activityType === 'walk' ? 'walk' : timerType;
+    setTimers(prev => ({ ...prev, [key]: Date.now() - (pausedTimers[key] || 0) }));
   };
 
-  const pauseTimer = (timerType) => {
+  const pauseTimer = (timerType, activityType) => {
     if (tg) tg.HapticFeedback?.impactOccurred('medium');
-    if (timers[timerType]) {
-      setPausedTimers(prev => ({ ...prev, [timerType]: Date.now() - timers[timerType] }));
+    const key = activityType === 'sleep' ? 'sleep' : activityType === 'walk' ? 'walk' : timerType;
+    if (timers[key]) {
+      setPausedTimers(prev => ({ ...prev, [key]: Date.now() - timers[key] }));
       setTimers(prev => {
         const newTimers = { ...prev };
-        delete newTimers[timerType];
+        delete newTimers[key];
         return newTimers;
       });
     }
@@ -373,31 +389,34 @@ const ActivityTracker = () => {
             <div className="space-y-4">
               {selectedActivity === 'breastfeeding' && (
                 <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    {['left', 'right'].map(side => (
-                      <div key={side} className="border-2 border-pink-200 rounded-lg p-4">
-                        <div className="text-center mb-2 font-medium">{side === 'left' ? 'Левая' : 'Правая'} грудь</div>
-                        <div className="text-2xl font-mono text-center mb-3">
-                          {timers[side] ? getTimerDuration(timers[side], pausedTimers[side]) : formatSeconds(getTotalDuration(side))}
+                  {!editingId && (
+                    <div className="grid grid-cols-2 gap-4">
+                      {['left', 'right'].map(side => (
+                        <div key={side} className="border-2 border-pink-200 rounded-lg p-4">
+                          <div className="text-center mb-2 font-medium">{side === 'left' ? 'Левая' : 'Правая'} грудь</div>
+                          <div className="text-2xl font-mono text-center mb-3">
+                            {timers[side] ? getTimerDuration(timers[side], pausedTimers[side]) : formatSeconds(getTotalDuration(side))}
+                          </div>
+                          <button
+                            onClick={() => timers[side] ? pauseTimer(side, 'breastfeeding') : startTimer(side, 'breastfeeding')}
+                            className={`w-full py-2 rounded-lg flex items-center justify-center mb-2 ${
+                              timers[side] ? 'bg-red-500 text-white' : 'bg-pink-500 text-white'
+                            }`}
+                          >
+                            {timers[side] ? <><Pause className="w-4 h-4 mr-2" />Стоп</> : <><Play className="w-4 h-4 mr-2" />Старт</>}
+                          </button>
+                          <input
+                            type="number"
+                            placeholder="или мин"
+                            className="w-full border border-gray-300 rounded-lg p-2 text-center text-sm"
+                            value={formData[`manual${side === 'left' ? 'Left' : 'Right'}Minutes`] || ''}
+                            onChange={(e) => setFormData(prev => ({ ...prev, [`manual${side === 'left' ? 'Left' : 'Right'}Minutes`]: e.target.value }))}
+                          />
                         </div>
-                        <button
-                          onClick={() => timers[side] ? pauseTimer(side) : startTimer(side)}
-                          className={`w-full py-2 rounded-lg flex items-center justify-center mb-2 ${
-                            timers[side] ? 'bg-red-500 text-white' : 'bg-pink-500 text-white'
-                          }`}
-                        >
-                          {timers[side] ? <><Pause className="w-4 h-4 mr-2" />Стоп</> : <><Play className="w-4 h-4 mr-2" />Старт</>}
-                        </button>
-                        <input
-                          type="number"
-                          placeholder="или мин"
-                          className="w-full border border-gray-300 rounded-lg p-2 text-center text-sm"
-                          value={formData[`manual${side === 'left' ? 'Left' : 'Right'}Minutes`] || ''}
-                          onChange={(e) => setFormData(prev => ({ ...prev, [`manual${side === 'left' ? 'Left' : 'Right'}Minutes`]: e.target.value }))}
-                        />
-                      </div>
-                    ))}
-                  </div>
+                      ))}
+                    </div>
+                  )}
+                  
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
                     <input
@@ -407,6 +426,31 @@ const ActivityTracker = () => {
                       onChange={(e) => setFormData(prev => ({ ...prev, startTime: new Date(e.target.value).toISOString() }))}
                     />
                   </div>
+                  
+                  {editingId && (
+                    <>
+                      <div>
+                        <label className="block mb-2 font-medium">Левая грудь (минут):</label>
+                        <input
+                          type="number"
+                          className="w-full border-2 border-gray-200 rounded-lg p-3"
+                          value={formData.manualLeftMinutes || Math.floor((formData.leftDuration || 0) / 60)}
+                          onChange={(e) => setFormData(prev => ({ ...prev, manualLeftMinutes: e.target.value }))}
+                          placeholder="Введите минуты"
+                        />
+                      </div>
+                      <div>
+                        <label className="block mb-2 font-medium">Правая грудь (минут):</label>
+                        <input
+                          type="number"
+                          className="w-full border-2 border-gray-200 rounded-lg p-3"
+                          value={formData.manualRightMinutes || Math.floor((formData.rightDuration || 0) / 60)}
+                          onChange={(e) => setFormData(prev => ({ ...prev, manualRightMinutes: e.target.value }))}
+                          placeholder="Введите минуты"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -429,15 +473,19 @@ const ActivityTracker = () => {
 
               {(selectedActivity === 'sleep' || selectedActivity === 'walk') && (
                 <div className="space-y-4">
-                  <div className="border-2 border-indigo-200 rounded-lg p-4">
-                    <div className="text-2xl font-mono text-center mb-3">
-                      {timers.main ? getTimerDuration(timers.main, pausedTimers.main) : formatSeconds(getTotalDuration('main'))}
+                  {!editingId && (
+                    <div className="border-2 border-indigo-200 rounded-lg p-4">
+                      <div className="text-2xl font-mono text-center mb-3">
+                        {timers[selectedActivity] ? getTimerDuration(timers[selectedActivity], pausedTimers[selectedActivity]) : formatSeconds(getTotalDuration(selectedActivity))}
+                      </div>
+                      <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'}`}>
+                        {timers[selectedActivity] ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер</>}
+                      </button>
                     </div>
-                    <button onClick={() => timers.main ? pauseTimer('main') : startTimer('main')} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers.main ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'}`}>
-                      {timers.main ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер</>}
-                    </button>
-                  </div>
-                  <div className="text-center text-gray-500">или укажите вручную</div>
+                  )}
+                  
+                  {!editingId && <div className="text-center text-gray-500">или укажите вручную</div>}
+                  
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
                     <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.startTime ? new Date(formData.startTime).toISOString().slice(0, 16) : ''} onChange={(e) => setFormData(prev => ({ ...prev, startTime: new Date(e.target.value).toISOString() }))} />
@@ -542,8 +590,8 @@ const ActivityTracker = () => {
                     </div>
                     <div className="text-lg font-mono">
                       {timer.type === 'breastfeeding' 
-                        ? `${Math.floor(getTotalDuration('left') / 60)}м / ${Math.floor(getTotalDuration('right') / 60)}м`
-                        : formatSeconds(getTotalDuration('main'))}
+                        ? `Л:${Math.floor(timer.leftTime / 60)}м / П:${Math.floor(timer.rightTime / 60)}м`
+                        : formatSeconds(timer.time)}
                     </div>
                   </button>
                 );
