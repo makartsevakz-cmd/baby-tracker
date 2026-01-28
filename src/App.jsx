@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -8,6 +8,7 @@ const ActivityTracker = () => {
   const [timers, setTimers] = useState({});
   const [pausedTimers, setPausedTimers] = useState({});
   const [formData, setFormData] = useState({});
+  const [editingId, setEditingId] = useState(null);
   const [tg, setTg] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -112,6 +113,7 @@ const ActivityTracker = () => {
       setView('main');
       setSelectedActivity(null);
       setFormData({});
+      setEditingId(null);
     }
   }, [view, tg]);
 
@@ -138,8 +140,8 @@ const ActivityTracker = () => {
   const saveActivity = useCallback(() => {
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
     
-    const newActivity = {
-      id: Date.now(),
+    const activityData = {
+      id: editingId || Date.now(),
       ...formData,
       date: new Date(formData.startTime).toLocaleDateString('ru-RU'),
     };
@@ -148,31 +150,75 @@ const ActivityTracker = () => {
       let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : getTotalDuration('left');
       let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : getTotalDuration('right');
 
-      newActivity.leftDuration = leftDuration;
-      newActivity.rightDuration = rightDuration;
-      newActivity.endTime = new Date(new Date(formData.startTime).getTime() + (leftDuration + rightDuration) * 1000).toISOString();
+      activityData.leftDuration = leftDuration;
+      activityData.rightDuration = rightDuration;
+      activityData.endTime = new Date(new Date(formData.startTime).getTime() + (leftDuration + rightDuration) * 1000).toISOString();
       
       resetTimer('left');
       resetTimer('right');
     } else if (formData.type === 'sleep' || formData.type === 'walk') {
       if (timers.main || pausedTimers.main) {
         const duration = getTotalDuration('main');
-        newActivity.endTime = new Date(new Date(formData.startTime).getTime() + duration * 1000).toISOString();
+        activityData.endTime = new Date(new Date(formData.startTime).getTime() + duration * 1000).toISOString();
         resetTimer('main');
       } else if (formData.endTime) {
-        newActivity.endTime = formData.endTime;
+        activityData.endTime = formData.endTime;
       } else {
-        newActivity.endTime = new Date().toISOString();
+        activityData.endTime = new Date().toISOString();
       }
-    } else if (!['bath', 'diaper', 'medicine'].includes(formData.type) && !newActivity.endTime) {
-      newActivity.endTime = new Date().toISOString();
+    } else if (!['bath', 'diaper', 'medicine'].includes(formData.type) && !activityData.endTime) {
+      activityData.endTime = new Date().toISOString();
     }
 
-    setActivities(prev => [newActivity, ...prev]);
+    if (editingId) {
+      setActivities(prev => prev.map(a => a.id === editingId ? activityData : a));
+    } else {
+      setActivities(prev => [activityData, ...prev]);
+    }
+    
     setView('main');
     setSelectedActivity(null);
     setFormData({});
-  }, [formData, tg, timers, pausedTimers]);
+    setEditingId(null);
+  }, [formData, tg, timers, pausedTimers, editingId]);
+
+  const deleteActivity = (id) => {
+    if (tg) tg.HapticFeedback?.notificationOccurred('warning');
+    if (window.confirm('Удалить эту запись?')) {
+      setActivities(prev => prev.filter(a => a.id !== id));
+    }
+  };
+
+  const editActivity = (activity) => {
+    if (tg) tg.HapticFeedback?.impactOccurred('light');
+    setEditingId(activity.id);
+    setSelectedActivity(activity.type);
+    setFormData(activity);
+    setView('add');
+  };
+
+  const getActiveTimers = () => {
+    const activeTimers = [];
+    
+    Object.keys(timers).forEach(key => {
+      if (key === 'left' || key === 'right') {
+        const existing = activeTimers.find(t => t.type === 'breastfeeding');
+        if (existing) {
+          existing.timers.push(key);
+        } else {
+          activeTimers.push({ type: 'breastfeeding', timers: [key] });
+        }
+      } else if (key === 'main') {
+        if (selectedActivity === 'sleep') {
+          activeTimers.push({ type: 'sleep', timers: ['main'] });
+        } else if (selectedActivity === 'walk') {
+          activeTimers.push({ type: 'walk', timers: ['main'] });
+        }
+      }
+    });
+    
+    return activeTimers;
+  };
 
   const getTodayStats = () => {
     const today = new Date().toLocaleDateString('ru-RU');
@@ -223,7 +269,7 @@ const ActivityTracker = () => {
       tg.BackButton.onClick(handleBack);
       
       if (view === 'add') {
-        tg.MainButton.setText('Сохранить');
+        tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
         tg.MainButton.show();
         tg.MainButton.onClick(saveActivity);
       } else {
@@ -235,7 +281,7 @@ const ActivityTracker = () => {
       tg.BackButton.offClick(handleBack);
       tg.MainButton.offClick(saveActivity);
     };
-  }, [view, tg, handleBack, saveActivity]);
+  }, [view, tg, handleBack, saveActivity, editingId]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -254,6 +300,7 @@ const ActivityTracker = () => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     
     setSelectedActivity(type);
+    setEditingId(null);
     const now = new Date().toISOString();
     const baseData = { type, startTime: now, comment: '' };
     
@@ -269,6 +316,12 @@ const ActivityTracker = () => {
       setFormData(baseData);
     }
     
+    setView('add');
+  };
+
+  const continueActivity = (type) => {
+    if (tg) tg.HapticFeedback?.impactOccurred('light');
+    setSelectedActivity(type);
     setView('add');
   };
 
@@ -300,12 +353,14 @@ const ActivityTracker = () => {
     );
   }
 
+  const activeTimers = getActiveTimers();
+
   if (view === 'add' && selectedActivity) {
     const ActivityIcon = activityTypes[selectedActivity].icon;
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-4 pb-32 safe-area-inset">
-        <div className="max-w-2xl mx-auto">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-32">
+        <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center mb-6">
               <button onClick={handleBack} className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200">
@@ -429,8 +484,8 @@ const ActivityTracker = () => {
     const stats = getTodayStats();
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-4 pb-24 safe-area-inset">
-        <div className="max-w-2xl mx-auto">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-24">
+        <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center mb-6">
               <button onClick={handleBack} className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200">
@@ -467,8 +522,36 @@ const ActivityTracker = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-4 pb-24 safe-area-inset">
-      <div className="max-w-2xl mx-auto">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-24">
+      <div className="max-w-2xl mx-auto px-4">
+        {activeTimers.length > 0 && (
+          <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
+            <h3 className="text-sm font-semibold mb-3 text-gray-700">Активные таймеры</h3>
+            <div className="space-y-2">
+              {activeTimers.map((timer, idx) => {
+                const ActivityIcon = activityTypes[timer.type].icon;
+                return (
+                  <button
+                    key={idx}
+                    onClick={() => continueActivity(timer.type)}
+                    className={`w-full ${activityTypes[timer.type].color} rounded-lg p-3 flex items-center justify-between active:scale-95 transition-transform`}
+                  >
+                    <div className="flex items-center">
+                      <ActivityIcon className="w-5 h-5 mr-3" />
+                      <span className="font-medium">{activityTypes[timer.type].label}</span>
+                    </div>
+                    <div className="text-lg font-mono">
+                      {timer.type === 'breastfeeding' 
+                        ? `${Math.floor(getTotalDuration('left') / 60)}м / ${Math.floor(getTotalDuration('right') / 60)}м`
+                        : formatSeconds(getTotalDuration('main'))}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold text-gray-800">Трекер малыша</h1>
@@ -496,24 +579,40 @@ const ActivityTracker = () => {
               const ActivityIcon = activityTypes[activity.type].icon;
               return (
                 <div key={activity.id} className={`${activityTypes[activity.type].color} rounded-lg p-3`}>
-                  <div className="flex items-start">
-                    <ActivityIcon className="w-5 h-5 mr-3 mt-1 flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium">{activityTypes[activity.type].label}</div>
-                      <div className="text-sm opacity-75">
-                        {activity.startTime && formatTime(activity.startTime)}
-                        {activity.endTime && activity.startTime && ` - ${formatTime(activity.endTime)} (${formatDuration(activity.startTime, activity.endTime)})`}
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-start flex-1 min-w-0">
+                      <ActivityIcon className="w-5 h-5 mr-3 mt-1 flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium">{activityTypes[activity.type].label}</div>
+                        <div className="text-sm opacity-75">
+                          {activity.startTime && formatTime(activity.startTime)}
+                          {activity.endTime && activity.startTime && ` - ${formatTime(activity.endTime)} (${formatDuration(activity.startTime, activity.endTime)})`}
+                        </div>
+                        {activity.type === 'breastfeeding' && (
+                          <div className="text-sm opacity-75">Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>
+                        )}
+                        {activity.foodType && (
+                          <div className="text-sm opacity-75">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
+                        )}
+                        {activity.amount && <div className="text-sm opacity-75">Количество: {activity.amount} мл</div>}
+                        {activity.diaperType && <div className="text-sm opacity-75">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
+                        {activity.medicineName && <div className="text-sm opacity-75">{activity.medicineName}</div>}
+                        {activity.comment && <div className="text-sm opacity-75 mt-1">{activity.comment}</div>}
                       </div>
-                      {activity.type === 'breastfeeding' && (
-                        <div className="text-sm opacity-75">Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>
-                      )}
-                      {activity.foodType && (
-                        <div className="text-sm opacity-75">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
-                      )}
-                      {activity.amount && <div className="text-sm opacity-75">Количество: {activity.amount} мл</div>}
-                      {activity.diaperType && <div className="text-sm opacity-75">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
-                      {activity.medicineName && <div className="text-sm opacity-75">{activity.medicineName}</div>}
-                      {activity.comment && <div className="text-sm opacity-75 mt-1">{activity.comment}</div>}
+                    </div>
+                    <div className="flex gap-2 ml-2">
+                      <button
+                        onClick={() => editActivity(activity)}
+                        className="p-2 hover:bg-white/50 rounded-lg transition-colors"
+                      >
+                        <Edit2 className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => deleteActivity(activity.id)}
+                        className="p-2 hover:bg-white/50 rounded-lg transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
                 </div>
