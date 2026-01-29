@@ -1,5 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
+import { 
+  supabase, 
+  authHelpers, 
+  babyHelpers, 
+  activityHelpers, 
+  growthHelpers,
+  subscribeToActivities,
+  subscribeToGrowthRecords
+} from './utils/supabase';
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -21,6 +30,8 @@ const ActivityTracker = () => {
   const [profileForm, setProfileForm] = useState({ name: '', birthDate: '', photo: null });
   const [growthForm, setGrowthForm] = useState({ date: '', weight: '', height: '' });
   const [editingGrowthId, setEditingGrowthId] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authError, setAuthError] = useState(null);
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -78,88 +89,127 @@ const ActivityTracker = () => {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const saveToCloud = useCallback((key, value) => {
-    if (window.Telegram?.WebApp?.CloudStorage) {
-      window.Telegram.WebApp.CloudStorage.setItem(key, JSON.stringify(value), (error) => {
-        if (error) {
-          console.error(`Ошибка сохранения ${key}:`, error);
-          localStorage.setItem(key, JSON.stringify(value));
-        }
-      });
-    } else {
-      localStorage.setItem(key, JSON.stringify(value));
-    }
-  }, []);
+  // Convert Supabase activity to app format
+  const convertFromSupabaseActivity = (dbActivity) => {
+    return {
+      id: dbActivity.id,
+      type: dbActivity.type,
+      startTime: dbActivity.start_time,
+      endTime: dbActivity.end_time,
+      comment: dbActivity.comment,
+      date: new Date(dbActivity.start_time).toLocaleDateString('ru-RU'),
+      // Type-specific fields
+      leftDuration: dbActivity.left_duration,
+      rightDuration: dbActivity.right_duration,
+      foodType: dbActivity.food_type,
+      amount: dbActivity.amount,
+      diaperType: dbActivity.diaper_type,
+      medicineName: dbActivity.medicine_name,
+    };
+  };
 
-  const loadData = useCallback(() => {
+  // Convert app activity to Supabase format
+  const convertToSupabaseActivity = (activity) => {
+    return {
+      type: activity.type,
+      startTime: activity.startTime,
+      endTime: activity.endTime,
+      comment: activity.comment,
+      // Type-specific fields
+      leftDuration: activity.leftDuration,
+      rightDuration: activity.rightDuration,
+      foodType: activity.foodType,
+      amount: activity.amount ? parseInt(activity.amount) : null,
+      diaperType: activity.diaperType,
+      medicineName: activity.medicineName,
+    };
+  };
+
+  // Convert Supabase growth record to app format
+  const convertFromSupabaseGrowth = (dbRecord) => {
+    return {
+      id: dbRecord.id,
+      date: dbRecord.measurement_date,
+      weight: dbRecord.weight,
+      height: dbRecord.height,
+    };
+  };
+
+  const loadData = useCallback(async () => {
     setIsLoading(true);
+    setAuthError(null);
     
-    if (window.Telegram?.WebApp?.CloudStorage) {
-      window.Telegram.WebApp.CloudStorage.getItem('baby_activities', (error, value) => {
-        if (!error && value) {
-          try {
-            setActivities(JSON.parse(value));
-          } catch (e) {
-            console.error('Ошибка парсинга:', e);
-          }
+    try {
+      // Authenticate with Telegram
+      if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
+        const telegramUser = window.Telegram.WebApp.initDataUnsafe.user;
+        const { data, error } = await authHelpers.signInWithTelegram(telegramUser);
+        
+        if (error) {
+          console.error('Auth error:', error);
+          setAuthError('Ошибка аутентификации');
+          // Fallback to localStorage
+          loadFromLocalStorage();
+          return;
         }
-      });
-
-      window.Telegram.WebApp.CloudStorage.getItem('active_timers', (error, value) => {
-        if (!error && value) {
-          try {
-            setTimers(JSON.parse(value));
-          } catch (e) {
-            console.error('Ошибка парсинга:', e);
-          }
+        
+        setIsAuthenticated(true);
+        
+        // Load baby profile
+        const profileResult = await babyHelpers.getProfile();
+        if (profileResult.data) {
+          setBabyProfile({
+            name: profileResult.data.name || '',
+            birthDate: profileResult.data.birth_date || '',
+            photo: profileResult.data.photo_url || null,
+          });
         }
-      });
-
-      window.Telegram.WebApp.CloudStorage.getItem('paused_timers', (error, value) => {
-        if (!error && value) {
-          try {
-            setPausedTimers(JSON.parse(value));
-          } catch (e) {
-            console.error('Ошибка парсинга:', e);
-          }
+        
+        // Load activities
+        const activitiesResult = await activityHelpers.getActivities();
+        if (activitiesResult.data) {
+          setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
         }
-      });
-
-      window.Telegram.WebApp.CloudStorage.getItem('baby_profile', (error, value) => {
-        if (!error && value) {
-          try {
-            setBabyProfile(JSON.parse(value));
-          } catch (e) {
-            console.error('Ошибка парсинга:', e);
-          }
+        
+        // Load growth records
+        const growthResult = await growthHelpers.getRecords();
+        if (growthResult.data) {
+          setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
         }
-      });
-
-      window.Telegram.WebApp.CloudStorage.getItem('growth_data', (error, value) => {
-        if (!error && value) {
-          try {
-            setGrowthData(JSON.parse(value));
-          } catch (e) {
-            console.error('Ошибка парсинга:', e);
-          }
-        }
-        setIsLoading(false);
-      });
-    } else {
-      const savedActivities = localStorage.getItem('baby_activities');
-      const savedTimers = localStorage.getItem('active_timers');
-      const savedPaused = localStorage.getItem('paused_timers');
-      const savedProfile = localStorage.getItem('baby_profile');
-      const savedGrowth = localStorage.getItem('growth_data');
-      
-      if (savedActivities) setActivities(JSON.parse(savedActivities));
-      if (savedTimers) setTimers(JSON.parse(savedTimers));
-      if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
-      if (savedProfile) setBabyProfile(JSON.parse(savedProfile));
-      if (savedGrowth) setGrowthData(JSON.parse(savedGrowth));
+        
+        // Load timers from localStorage (they're temporary, not in DB)
+        const savedTimers = localStorage.getItem('active_timers');
+        const savedPaused = localStorage.getItem('paused_timers');
+        if (savedTimers) setTimers(JSON.parse(savedTimers));
+        if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
+        
+      } else {
+        // Not in Telegram, use localStorage
+        console.log('Not in Telegram Web App, using localStorage');
+        loadFromLocalStorage();
+      }
+    } catch (error) {
+      console.error('Load data error:', error);
+      setAuthError('Ошибка загрузки данных');
+      loadFromLocalStorage();
+    } finally {
       setIsLoading(false);
     }
   }, []);
+
+  const loadFromLocalStorage = () => {
+    const savedActivities = localStorage.getItem('baby_activities');
+    const savedTimers = localStorage.getItem('active_timers');
+    const savedPaused = localStorage.getItem('paused_timers');
+    const savedProfile = localStorage.getItem('baby_profile');
+    const savedGrowth = localStorage.getItem('growth_data');
+    
+    if (savedActivities) setActivities(JSON.parse(savedActivities));
+    if (savedTimers) setTimers(JSON.parse(savedTimers));
+    if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
+    if (savedProfile) setBabyProfile(JSON.parse(savedProfile));
+    if (savedGrowth) setGrowthData(JSON.parse(savedGrowth));
+  };
 
   const handleBack = useCallback(() => {
     if (view !== 'main') {
@@ -191,7 +241,7 @@ const ActivityTracker = () => {
     });
   };
 
-  const saveActivity = useCallback(() => {
+  const saveActivity = useCallback(async () => {
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
     
     // Validate required fields
@@ -234,22 +284,57 @@ const ActivityTracker = () => {
       activityData.endTime = new Date().toISOString();
     }
 
-    if (editingId) {
-      setActivities(prev => prev.map(a => a.id === editingId ? activityData : a));
-    } else {
-      setActivities(prev => [activityData, ...prev]);
+    try {
+      if (isAuthenticated) {
+        // Save to Supabase
+        const supabaseData = convertToSupabaseActivity(activityData);
+        
+        if (editingId) {
+          const { data, error } = await activityHelpers.updateActivity(editingId, supabaseData);
+          if (error) throw error;
+          setActivities(prev => prev.map(a => a.id === editingId ? convertFromSupabaseActivity(data) : a));
+        } else {
+          const { data, error } = await activityHelpers.createActivity(supabaseData);
+          if (error) throw error;
+          setActivities(prev => [convertFromSupabaseActivity(data), ...prev]);
+        }
+      } else {
+        // Fallback to local storage
+        if (editingId) {
+          setActivities(prev => prev.map(a => a.id === editingId ? activityData : a));
+        } else {
+          setActivities(prev => [activityData, ...prev]);
+        }
+        localStorage.setItem('baby_activities', JSON.stringify(activities));
+      }
+    } catch (error) {
+      console.error('Save activity error:', error);
+      if (tg) tg.HapticFeedback?.notificationOccurred('error');
+      alert('Ошибка сохранения активности');
+      return;
     }
     
     setView('main');
     setSelectedActivity(null);
     setFormData({});
     setEditingId(null);
-  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer]);
+  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer, isAuthenticated, activities]);
 
-  const deleteActivity = (id) => {
+  const deleteActivity = async (id) => {
     if (tg) tg.HapticFeedback?.notificationOccurred('warning');
     if (window.confirm('Удалить эту запись?')) {
-      setActivities(prev => prev.filter(a => a.id !== id));
+      try {
+        if (isAuthenticated) {
+          const { error } = await activityHelpers.deleteActivity(id);
+          if (error) throw error;
+        } else {
+          localStorage.setItem('baby_activities', JSON.stringify(activities.filter(a => a.id !== id)));
+        }
+        setActivities(prev => prev.filter(a => a.id !== id));
+      } catch (error) {
+        console.error('Delete activity error:', error);
+        alert('Ошибка удаления активности');
+      }
     }
   };
 
@@ -360,13 +445,11 @@ const ActivityTracker = () => {
 
   useEffect(() => {
     if (!isLoading) {
-      saveToCloud('baby_activities', activities);
-      saveToCloud('active_timers', timers);
-      saveToCloud('paused_timers', pausedTimers);
-      saveToCloud('baby_profile', babyProfile);
-      saveToCloud('growth_data', growthData);
+      // Only save timers to localStorage (they're temporary)
+      localStorage.setItem('active_timers', JSON.stringify(timers));
+      localStorage.setItem('paused_timers', JSON.stringify(pausedTimers));
     }
-  }, [activities, timers, pausedTimers, babyProfile, growthData, isLoading, saveToCloud]);
+  }, [timers, pausedTimers, isLoading]);
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);
@@ -388,6 +471,42 @@ const ActivityTracker = () => {
       setProfileForm(babyProfile);
     }
   }, [view, babyProfile]);
+
+  // Set up real-time subscriptions
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const activitiesSubscription = subscribeToActivities((payload) => {
+      console.log('Activity change:', payload);
+      if (payload.eventType === 'INSERT') {
+        setActivities(prev => [convertFromSupabaseActivity(payload.new), ...prev]);
+      } else if (payload.eventType === 'UPDATE') {
+        setActivities(prev => prev.map(a => a.id === payload.new.id ? convertFromSupabaseActivity(payload.new) : a));
+      } else if (payload.eventType === 'DELETE') {
+        setActivities(prev => prev.filter(a => a.id !== payload.old.id));
+      }
+    });
+
+    const growthSubscription = subscribeToGrowthRecords((payload) => {
+      console.log('Growth change:', payload);
+      if (payload.eventType === 'INSERT') {
+        setGrowthData(prev => [...prev, convertFromSupabaseGrowth(payload.new)].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      } else if (payload.eventType === 'UPDATE') {
+        setGrowthData(prev => prev.map(r => r.id === payload.new.id ? convertFromSupabaseGrowth(payload.new) : r));
+      } else if (payload.eventType === 'DELETE') {
+        setGrowthData(prev => prev.filter(r => r.id !== payload.old.id));
+      }
+    });
+
+    return () => {
+      if (activitiesSubscription) {
+        supabase.removeChannel(activitiesSubscription);
+      }
+      if (growthSubscription) {
+        supabase.removeChannel(growthSubscription);
+      }
+    };
+  }, [isAuthenticated]);
 
   const startActivity = (type) => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -472,13 +591,34 @@ const ActivityTracker = () => {
   };
 
   // Profile functions
-  const saveProfile = useCallback(() => {
+  const saveProfile = useCallback(async () => {
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
-    setBabyProfile(profileForm);
-    setView('main');
-  }, [profileForm, tg]);
+    
+    try {
+      if (isAuthenticated) {
+        const { data, error } = await babyHelpers.upsertProfile({
+          name: profileForm.name,
+          birthDate: profileForm.birthDate,
+          photo: profileForm.photo,
+        });
+        if (error) throw error;
+        setBabyProfile({
+          name: data.name || '',
+          birthDate: data.birth_date || '',
+          photo: data.photo_url || null,
+        });
+      } else {
+        setBabyProfile(profileForm);
+        localStorage.setItem('baby_profile', JSON.stringify(profileForm));
+      }
+      setView('main');
+    } catch (error) {
+      console.error('Save profile error:', error);
+      alert('Ошибка сохранения профиля');
+    }
+  }, [profileForm, tg, isAuthenticated]);
 
-  const addGrowthRecord = useCallback(() => {
+  const addGrowthRecord = useCallback(async () => {
     if (!growthForm.date) {
       alert('Укажите дату измерения');
       return;
@@ -497,26 +637,57 @@ const ActivityTracker = () => {
       height: growthForm.height ? parseFloat(growthForm.height) : null
     };
 
-    if (editingGrowthId) {
-      setGrowthData(prev => prev.map(r => r.id === editingGrowthId ? record : r));
+    try {
+      if (isAuthenticated) {
+        if (editingGrowthId) {
+          const { data, error } = await growthHelpers.updateRecord(editingGrowthId, record);
+          if (error) throw error;
+          setGrowthData(prev => prev.map(r => r.id === editingGrowthId ? convertFromSupabaseGrowth(data) : r));
+        } else {
+          const { data, error } = await growthHelpers.createRecord(record);
+          if (error) throw error;
+          setGrowthData(prev => [...prev, convertFromSupabaseGrowth(data)].sort((a, b) => new Date(a.date) - new Date(b.date)));
+        }
+      } else {
+        if (editingGrowthId) {
+          setGrowthData(prev => prev.map(r => r.id === editingGrowthId ? record : r));
+        } else {
+          setGrowthData(prev => [...prev, record].sort((a, b) => new Date(a.date) - new Date(b.date)));
+        }
+        localStorage.setItem('growth_data', JSON.stringify(growthData));
+      }
+      
       setEditingGrowthId(null);
-    } else {
-      setGrowthData(prev => [...prev, record].sort((a, b) => new Date(a.date) - new Date(b.date)));
+      setGrowthForm({ date: '', weight: '', height: '' });
+    } catch (error) {
+      console.error('Save growth record error:', error);
+      alert('Ошибка сохранения записи');
     }
+  }, [growthForm, editingGrowthId, tg, isAuthenticated, growthData]);
 
-    setGrowthForm({ date: '', weight: '', height: '' });
-  }, [growthForm, editingGrowthId, tg]);
-
-  const deleteGrowthRecord = useCallback((id) => {
+  const deleteGrowthRecord = useCallback(async (id) => {
     if (window.confirm('Удалить запись?')) {
       if (tg) tg.HapticFeedback?.notificationOccurred('warning');
-      setGrowthData(prev => prev.filter(r => r.id !== id));
-      if (editingGrowthId === id) {
-        setEditingGrowthId(null);
-        setGrowthForm({ date: '', weight: '', height: '' });
+      
+      try {
+        if (isAuthenticated) {
+          const { error } = await growthHelpers.deleteRecord(id);
+          if (error) throw error;
+        } else {
+          localStorage.setItem('growth_data', JSON.stringify(growthData.filter(r => r.id !== id)));
+        }
+        
+        setGrowthData(prev => prev.filter(r => r.id !== id));
+        if (editingGrowthId === id) {
+          setEditingGrowthId(null);
+          setGrowthForm({ date: '', weight: '', height: '' });
+        }
+      } catch (error) {
+        console.error('Delete growth record error:', error);
+        alert('Ошибка удаления записи');
       }
     }
-  }, [editingGrowthId, tg]);
+  }, [editingGrowthId, tg, isAuthenticated, growthData]);
 
   const editGrowthRecord = useCallback((record) => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -571,6 +742,12 @@ const ActivityTracker = () => {
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
           <p className="text-gray-600">Загрузка...</p>
+          {authError && (
+            <p className="text-sm text-orange-600 mt-2">
+              {authError}<br />
+              Используется локальное хранилище
+            </p>
+          )}
         </div>
       </div>
     );
@@ -1382,9 +1559,23 @@ const ActivityTracker = () => {
         <div className="flex items-center justify-between mb-4 bg-white rounded-2xl shadow-lg p-4">
           <div className="flex items-center">
             <Baby className="w-6 h-6 mr-2 text-purple-600" />
-            <h1 className="text-xl font-bold text-gray-800">
-              {babyProfile.name || 'Трекер малыша'}
-            </h1>
+            <div>
+              <h1 className="text-xl font-bold text-gray-800">
+                {babyProfile.name || 'Трекер малыша'}
+              </h1>
+              {isAuthenticated && (
+                <div className="flex items-center text-xs text-green-600 mt-1">
+                  <div className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></div>
+                  Синхронизировано
+                </div>
+              )}
+              {!isAuthenticated && (
+                <div className="flex items-center text-xs text-gray-500 mt-1">
+                  <div className="w-2 h-2 bg-gray-400 rounded-full mr-1"></div>
+                  Локальное хранилище
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex gap-2">
             <button 
