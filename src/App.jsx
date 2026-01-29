@@ -26,6 +26,26 @@ const ActivityTracker = () => {
     return new Date(date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Helper to convert ISO string to local datetime-local format
+  const toLocalDateTimeString = (isoString) => {
+    if (!isoString) return '';
+    const date = new Date(isoString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hours}:${minutes}`;
+  };
+
+  // Helper to convert local datetime-local value to ISO string
+  const fromLocalDateTimeString = (localString) => {
+    if (!localString) return '';
+    // Local datetime string is already in local timezone, just add seconds and convert to ISO
+    const date = new Date(localString);
+    return date.toISOString();
+  };
+
   const formatDuration = (start, end) => {
     const diff = new Date(end) - new Date(start);
     const hours = Math.floor(diff / 3600000);
@@ -140,6 +160,13 @@ const ActivityTracker = () => {
   const saveActivity = useCallback(() => {
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
     
+    // Validate required fields
+    if (!formData.type || !formData.startTime) {
+      if (tg) tg.HapticFeedback?.notificationOccurred('error');
+      alert('Пожалуйста, заполните обязательные поля');
+      return;
+    }
+    
     const activityData = {
       id: editingId || Date.now(),
       ...formData,
@@ -183,7 +210,7 @@ const ActivityTracker = () => {
     setSelectedActivity(null);
     setFormData({});
     setEditingId(null);
-  }, [formData, tg, timers, pausedTimers, editingId]);
+  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer]);
 
   const deleteActivity = (id) => {
     if (tg) tg.HapticFeedback?.notificationOccurred('warning');
@@ -336,6 +363,27 @@ const ActivityTracker = () => {
   const continueActivity = (type) => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     setSelectedActivity(type);
+    
+    // Set form data with current timer values
+    const now = new Date().toISOString();
+    if (type === 'breastfeeding') {
+      setFormData({ 
+        type, 
+        startTime: now, 
+        comment: '',
+        leftDuration: getTotalDuration('left'),
+        rightDuration: getTotalDuration('right'),
+        manualLeftMinutes: '',
+        manualRightMinutes: ''
+      });
+    } else {
+      setFormData({ 
+        type, 
+        startTime: now, 
+        comment: '' 
+      });
+    }
+    
     setView('add');
   };
 
@@ -372,10 +420,29 @@ const ActivityTracker = () => {
   const activeTimers = getActiveTimers();
 
   if (view === 'add' && selectedActivity) {
-    const ActivityIcon = activityTypes[selectedActivity].icon;
+    const ActivityIcon = activityTypes[selectedActivity]?.icon;
+    
+    if (!ActivityIcon) {
+      return (
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-gray-600">Ошибка загрузки активности</p>
+            <button 
+              onClick={handleBack}
+              className="mt-4 bg-purple-500 text-white px-6 py-2 rounded-lg"
+            >
+              Вернуться
+            </button>
+          </div>
+        </div>
+      );
+    }
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-32">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
+        {/* Добавлен отступ сверху для Telegram Header */}
+        <div className="pt-2" />
+        
         <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center mb-6">
@@ -422,8 +489,8 @@ const ActivityTracker = () => {
                     <input
                       type="datetime-local"
                       className="w-full border-2 border-gray-200 rounded-lg p-3"
-                      value={formData.startTime ? new Date(formData.startTime).toISOString().slice(0, 16) : ''}
-                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: new Date(e.target.value).toISOString() }))}
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
                     />
                   </div>
                   
@@ -457,6 +524,15 @@ const ActivityTracker = () => {
               {selectedActivity === 'bottle' && (
                 <div className="space-y-4">
                   <div>
+                    <label className="block mb-2 font-medium">Время начала:</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
                     <label className="block mb-2 font-medium">Чем кормили:</label>
                     <select className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.foodType || 'breast_milk'} onChange={(e) => setFormData(prev => ({ ...prev, foodType: e.target.value }))}>
                       <option value="breast_milk">Грудное молоко</option>
@@ -488,32 +564,66 @@ const ActivityTracker = () => {
                   
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
-                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.startTime ? new Date(formData.startTime).toISOString().slice(0, 16) : ''} onChange={(e) => setFormData(prev => ({ ...prev, startTime: new Date(e.target.value).toISOString() }))} />
+                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={toLocalDateTimeString(formData.startTime)} onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))} />
                   </div>
                   <div>
                     <label className="block mb-2 font-medium">Время окончания:</label>
-                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.endTime ? new Date(formData.endTime).toISOString().slice(0, 16) : ''} onChange={(e) => setFormData(prev => ({ ...prev, endTime: new Date(e.target.value).toISOString() }))} />
+                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={toLocalDateTimeString(formData.endTime)} onChange={(e) => setFormData(prev => ({ ...prev, endTime: fromLocalDateTimeString(e.target.value) }))} />
                   </div>
                 </div>
               )}
 
               {selectedActivity === 'diaper' && (
-                <div>
-                  <label className="block mb-2 font-medium">Тип:</label>
-                  <div className="grid grid-cols-2 gap-3">
-                    {['wet', 'dirty'].map(type => (
-                      <button key={type} onClick={() => setFormData(prev => ({ ...prev, diaperType: type }))} className={`py-3 rounded-lg border-2 ${formData.diaperType === type ? 'border-yellow-500 bg-yellow-50' : 'border-gray-200'}`}>
-                        {type === 'wet' ? 'Мокрый' : 'Грязный'}
-                      </button>
-                    ))}
+                <div className="space-y-4">
+                  <div>
+                    <label className="block mb-2 font-medium">Время:</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Тип:</label>
+                    <div className="grid grid-cols-2 gap-3">
+                      {['wet', 'dirty'].map(type => (
+                        <button key={type} onClick={() => setFormData(prev => ({ ...prev, diaperType: type }))} className={`py-3 rounded-lg border-2 ${formData.diaperType === type ? 'border-yellow-500 bg-yellow-50' : 'border-gray-200'}`}>
+                          {type === 'wet' ? 'Мокрый' : 'Грязный'}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
 
               {selectedActivity === 'medicine' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block mb-2 font-medium">Время:</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Название лекарства:</label>
+                    <input type="text" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.medicineName || ''} onChange={(e) => setFormData(prev => ({ ...prev, medicineName: e.target.value }))} placeholder="Введите название" />
+                  </div>
+                </div>
+              )}
+
+              {selectedActivity === 'bath' && (
                 <div>
-                  <label className="block mb-2 font-medium">Название лекарства:</label>
-                  <input type="text" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.medicineName || ''} onChange={(e) => setFormData(prev => ({ ...prev, medicineName: e.target.value }))} placeholder="Введите название" />
+                  <label className="block mb-2 font-medium">Время начала:</label>
+                  <input
+                    type="datetime-local"
+                    className="w-full border-2 border-gray-200 rounded-lg p-3"
+                    value={toLocalDateTimeString(formData.startTime)}
+                    onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                  />
                 </div>
               )}
 
@@ -524,6 +634,29 @@ const ActivityTracker = () => {
             </div>
           </div>
         </div>
+        
+        {/* Spacer для Telegram MainButton */}
+        <div className="h-20" />
+        
+        {/* Custom bottom bar для desktop/web версии */}
+        {!tg && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
+            <div className="max-w-2xl mx-auto flex gap-3">
+              <button
+                onClick={handleBack}
+                className="flex-1 bg-gray-500 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+              >
+                Назад
+              </button>
+              <button
+                onClick={saveActivity}
+                className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+              >
+                {editingId ? 'Обновить' : 'Сохранить'}
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -532,7 +665,10 @@ const ActivityTracker = () => {
     const stats = getTodayStats();
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-24">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
+        {/* Добавлен отступ сверху для Telegram Header */}
+        <div className="pt-2" />
+        
         <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center mb-6">
@@ -565,12 +701,32 @@ const ActivityTracker = () => {
             </div>
           </div>
         </div>
+        
+        {/* Spacer для Telegram BackButton */}
+        <div className="h-16" />
+        
+        {/* Custom bottom bar для desktop/web версии */}
+        {!tg && (
+          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
+            <div className="max-w-2xl mx-auto">
+              <button
+                onClick={handleBack}
+                className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+              >
+                Назад
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pt-2 pb-24">
+    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
+      {/* Добавлен отступ сверху */}
+      <div className="pt-2" />
+      
       <div className="max-w-2xl mx-auto px-4">
         {activeTimers.length > 0 && (
           <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
@@ -620,7 +776,7 @@ const ActivityTracker = () => {
           </div>
         </div>
 
-        <div className="bg-white rounded-2xl shadow-lg p-6">
+        <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Последние записи ({activities.length})</h2>
           <div className="space-y-3">
             {activities.slice(0, 10).map(activity => {
@@ -672,6 +828,9 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
+      
+      {/* Дополнительный отступ снизу для безопасности */}
+      <div className="h-6" />
     </div>
   );
 };
