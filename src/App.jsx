@@ -302,21 +302,9 @@ const ActivityTracker = () => {
   useEffect(() => {
     if (!tg) return;
 
-    if (view === 'main') {
-      tg.BackButton.hide();
-      tg.MainButton.hide();
-    } else {
-      tg.BackButton.show();
-      tg.BackButton.onClick(handleBack);
-      
-      if (view === 'add') {
-        tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
-        tg.MainButton.show();
-        tg.MainButton.onClick(saveActivity);
-      } else {
-        tg.MainButton.hide();
-      }
-    }
+    // Hide Telegram navigation buttons since we're using custom header
+    tg.BackButton.hide();
+    tg.MainButton.hide();
 
     return () => {
       tg.BackButton.offClick(handleBack);
@@ -439,19 +427,34 @@ const ActivityTracker = () => {
     }
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
-        {/* Добавлен отступ сверху для Telegram Header */}
-        <div className="pt-2" />
-        
-        <div className="max-w-2xl mx-auto px-4">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="flex items-center mb-6">
-              <button onClick={handleBack} className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50">
+        {/* Custom Header Bar */}
+        <div className="bg-purple-600 text-white shadow-lg sticky top-0 z-10">
+          <div className="max-w-2xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <button 
+                onClick={handleBack} 
+                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors"
+              >
                 <ArrowLeft className="w-5 h-5" />
+                <span className="font-medium">Назад</span>
               </button>
-              <ActivityIcon className="w-6 h-6 mr-2" />
-              <h2 className="text-xl font-semibold">{activityTypes[selectedActivity].label}</h2>
+              <div className="flex items-center gap-2">
+                <ActivityIcon className="w-6 h-6" />
+                <h1 className="text-lg font-semibold">{activityTypes[selectedActivity].label}</h1>
+              </div>
+              <button
+                onClick={saveActivity}
+                className="px-4 py-2 bg-white text-purple-600 rounded-lg font-medium hover:bg-purple-50 active:bg-purple-100 transition-colors"
+              >
+                {editingId ? 'Обновить' : 'Сохранить'}
+              </button>
             </div>
+          </div>
+        </div>
+        
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
 
             <div className="space-y-4">
               {selectedActivity === 'breastfeeding' && (
@@ -634,29 +637,6 @@ const ActivityTracker = () => {
             </div>
           </div>
         </div>
-        
-        {/* Spacer для Telegram MainButton */}
-        <div className="h-20" />
-        
-        {/* Custom bottom bar для desktop/web версии */}
-        {!tg && (
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
-            <div className="max-w-2xl mx-auto flex gap-3">
-              <button
-                onClick={handleBack}
-                className="flex-1 bg-gray-500 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
-              >
-                Назад
-              </button>
-              <button
-                onClick={saveActivity}
-                className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
-              >
-                {editingId ? 'Обновить' : 'Сохранить'}
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
@@ -665,19 +645,29 @@ const ActivityTracker = () => {
     const stats = getTodayStats();
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
-        {/* Добавлен отступ сверху для Telegram Header */}
-        <div className="pt-2" />
-        
-        <div className="max-w-2xl mx-auto px-4">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="flex items-center mb-6">
-              <button onClick={handleBack} className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50">
+        {/* Custom Header Bar */}
+        <div className="bg-purple-600 text-white shadow-lg sticky top-0 z-10">
+          <div className="max-w-2xl mx-auto px-4 py-4">
+            <div className="flex items-center justify-between">
+              <button 
+                onClick={handleBack} 
+                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors"
+              >
                 <ArrowLeft className="w-5 h-5" />
+                <span className="font-medium">Назад</span>
               </button>
-              <BarChart3 className="w-6 h-6 mr-2" />
-              <h2 className="text-xl font-semibold">Статистика за сегодня</h2>
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-6 h-6" />
+                <h1 className="text-lg font-semibold">Статистика за сегодня</h1>
+              </div>
+              <div className="w-20"></div> {/* Spacer for symmetry */}
             </div>
+          </div>
+        </div>
+        
+        <div className="max-w-2xl mx-auto px-4 py-6">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="space-y-4">
               {Object.entries(stats).map(([type, data]) => {
                 const ActivityIcon = activityTypes[type].icon;
@@ -701,33 +691,13 @@ const ActivityTracker = () => {
             </div>
           </div>
         </div>
-        
-        {/* Spacer для Telegram BackButton */}
-        <div className="h-16" />
-        
-        {/* Custom bottom bar для desktop/web версии */}
-        {!tg && (
-          <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 p-4 shadow-lg">
-            <div className="max-w-2xl mx-auto">
-              <button
-                onClick={handleBack}
-                className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
-              >
-                Назад
-              </button>
-            </div>
-          </div>
-        )}
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
-      {/* Добавлен отступ сверху */}
-      <div className="pt-2" />
-      
-      <div className="max-w-2xl mx-auto px-4">
+      <div className="max-w-2xl mx-auto px-4 pt-4">
         {activeTimers.length > 0 && (
           <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
             <h3 className="text-sm font-semibold mb-3 text-gray-700">Активные таймеры</h3>
@@ -828,9 +798,6 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
-      
-      {/* Дополнительный отступ снизу для безопасности */}
-      <div className="h-6" />
     </div>
   );
 };
