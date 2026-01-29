@@ -11,6 +11,7 @@ const ActivityTracker = () => {
   const [editingId, setEditingId] = useState(null);
   const [tg, setTg] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -302,9 +303,21 @@ const ActivityTracker = () => {
   useEffect(() => {
     if (!tg) return;
 
-    // Hide Telegram navigation buttons since we're using custom header
-    tg.BackButton.hide();
-    tg.MainButton.hide();
+    if (view === 'main') {
+      tg.BackButton.hide();
+      tg.MainButton.hide();
+    } else {
+      tg.BackButton.show();
+      tg.BackButton.onClick(handleBack);
+      
+      if (view === 'add') {
+        tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
+        tg.MainButton.show();
+        tg.MainButton.onClick(saveActivity);
+      } else {
+        tg.MainButton.hide();
+      }
+    }
 
     return () => {
       tg.BackButton.offClick(handleBack);
@@ -427,34 +440,21 @@ const ActivityTracker = () => {
     }
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50">
-        {/* Custom Header Bar */}
-        <div className="bg-purple-600 text-white shadow-lg sticky top-0 z-10">
-          <div className="max-w-2xl mx-auto px-4 py-4">
-            <div className="flex items-center justify-between">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+        <div className="pt-2" />
+        
+        <div className="max-w-2xl mx-auto px-4">
+          <div className="bg-white rounded-2xl shadow-lg p-6">
+            <div className="flex items-center mb-6">
               <button 
                 onClick={handleBack} 
-                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors"
+                className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
               >
                 <ArrowLeft className="w-5 h-5" />
-                <span className="font-medium">Назад</span>
               </button>
-              <div className="flex items-center gap-2">
-                <ActivityIcon className="w-6 h-6" />
-                <h1 className="text-lg font-semibold">{activityTypes[selectedActivity].label}</h1>
-              </div>
-              <button
-                onClick={saveActivity}
-                className="px-4 py-2 bg-white text-purple-600 rounded-lg font-medium hover:bg-purple-50 active:bg-purple-100 transition-colors"
-              >
-                {editingId ? 'Обновить' : 'Сохранить'}
-              </button>
+              <ActivityIcon className="w-6 h-6 mr-2" />
+              <h2 className="text-xl font-semibold">{activityTypes[selectedActivity].label}</h2>
             </div>
-          </div>
-        </div>
-        
-        <div className="max-w-2xl mx-auto px-4 py-6">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
 
             <div className="space-y-4">
               {selectedActivity === 'breastfeeding' && (
@@ -634,6 +634,22 @@ const ActivityTracker = () => {
                 <label className="block mb-2 font-medium">Комментарий:</label>
                 <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder="Добавьте заметку..." />
               </div>
+
+              {/* Action Buttons */}
+              <div className="flex gap-3 pt-4">
+                <button
+                  onClick={handleBack}
+                  className="flex-1 bg-gray-500 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+                >
+                  Отмена
+                </button>
+                <button
+                  onClick={saveActivity}
+                  className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+                >
+                  {editingId ? 'Обновить' : 'Сохранить'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -642,53 +658,268 @@ const ActivityTracker = () => {
   }
 
   if (view === 'stats') {
-    const stats = getTodayStats();
+    // Get start of current week (Monday)
+    const getWeekStart = (offset = 0) => {
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Monday as first day
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + diff + (offset * 7));
+      monday.setHours(0, 0, 0, 0);
+      return monday;
+    };
+
+    const weekStart = getWeekStart(selectedWeekOffset);
+    const weekDays = Array.from({ length: 7 }, (_, i) => {
+      const day = new Date(weekStart);
+      day.setDate(weekStart.getDate() + i);
+      return day;
+    });
+
+    // Get activities for a specific hour and day
+    const getActivitiesForCell = (day, hour) => {
+      const dayStr = day.toLocaleDateString('ru-RU');
+      const dayActivities = activities.filter(a => a.date === dayStr);
+      
+      return dayActivities.filter(activity => {
+        if (!activity.startTime) return false;
+        const startTime = new Date(activity.startTime);
+        const startHour = startTime.getHours();
+        
+        if (activity.endTime) {
+          const endTime = new Date(activity.endTime);
+          const endHour = endTime.getHours();
+          
+          // Activity spans this hour
+          if (startHour <= hour && endHour >= hour) {
+            return true;
+          }
+          // Activity ends in this hour
+          if (endHour === hour) {
+            return true;
+          }
+        } else {
+          // No end time, just check start hour
+          return startHour === hour;
+        }
+        
+        return false;
+      });
+    };
+
+    // Get dominant activity color for a cell
+    const getCellColor = (activities) => {
+      if (activities.length === 0) return 'bg-gray-50';
+      
+      // Count activities by type
+      const counts = {};
+      activities.forEach(activity => {
+        counts[activity.type] = (counts[activity.type] || 0) + 1;
+      });
+      
+      // Find most common activity
+      let maxCount = 0;
+      let dominantType = activities[0].type;
+      Object.entries(counts).forEach(([type, count]) => {
+        if (count > maxCount) {
+          maxCount = count;
+          dominantType = type;
+        }
+      });
+      
+      return activityTypes[dominantType]?.color || 'bg-gray-200';
+    };
+
+    const formatWeekRange = () => {
+      const weekEnd = new Date(weekStart);
+      weekEnd.setDate(weekStart.getDate() + 6);
+      return `${weekStart.getDate()} ${weekStart.toLocaleDateString('ru-RU', { month: 'short' })} - ${weekEnd.getDate()} ${weekEnd.toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })}`;
+    };
+
+    // Get summary statistics for the week
+    const getWeekStats = () => {
+      const weekActivities = activities.filter(a => {
+        const activityDate = new Date(a.startTime);
+        const weekEnd = new Date(weekStart);
+        weekEnd.setDate(weekStart.getDate() + 7);
+        return activityDate >= weekStart && activityDate < weekEnd;
+      });
+
+      const stats = {};
+      weekActivities.forEach(activity => {
+        if (!stats[activity.type]) {
+          stats[activity.type] = { count: 0, totalDuration: 0 };
+        }
+        stats[activity.type].count++;
+        
+        if (activity.startTime && activity.endTime) {
+          stats[activity.type].totalDuration += new Date(activity.endTime) - new Date(activity.startTime);
+        } else if (activity.type === 'breastfeeding') {
+          stats[activity.type].totalDuration += (activity.leftDuration + activity.rightDuration) * 1000;
+        }
+      });
+
+      return stats;
+    };
+
+    const weekStats = getWeekStats();
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50">
-        {/* Custom Header Bar */}
-        <div className="bg-purple-600 text-white shadow-lg sticky top-0 z-10">
-          <div className="max-w-2xl mx-auto px-4 py-4">
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+        <div className="pt-2" />
+        
+        <div className="max-w-7xl mx-auto px-4">
+          {/* Header with back button */}
+          <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
+            <button 
+              onClick={handleBack} 
+              className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+            <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
+            <h2 className="text-xl font-semibold">Статистика</h2>
+          </div>
+
+          {/* Week Navigation */}
+          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
             <div className="flex items-center justify-between">
-              <button 
-                onClick={handleBack} 
-                className="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors"
+              <button
+                onClick={() => {
+                  setSelectedWeekOffset(prev => prev - 1);
+                  if (tg) tg.HapticFeedback?.impactOccurred('light');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200"
               >
                 <ArrowLeft className="w-5 h-5" />
-                <span className="font-medium">Назад</span>
               </button>
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-6 h-6" />
-                <h1 className="text-lg font-semibold">Статистика за сегодня</h1>
+              <div className="text-center">
+                <div className="font-semibold text-lg">{formatWeekRange()}</div>
+                {selectedWeekOffset === 0 && <div className="text-sm text-gray-500">Текущая неделя</div>}
               </div>
-              <div className="w-20"></div> {/* Spacer for symmetry */}
+              <button
+                onClick={() => {
+                  setSelectedWeekOffset(prev => prev + 1);
+                  if (tg) tg.HapticFeedback?.impactOccurred('light');
+                }}
+                className="p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200"
+                disabled={selectedWeekOffset >= 0}
+              >
+                <ArrowLeft className="w-5 h-5 rotate-180" style={{ opacity: selectedWeekOffset >= 0 ? 0.3 : 1 }} />
+              </button>
             </div>
           </div>
-        </div>
-        
-        <div className="max-w-2xl mx-auto px-4 py-6">
-          <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="space-y-4">
-              {Object.entries(stats).map(([type, data]) => {
-                const ActivityIcon = activityTypes[type].icon;
+
+          {/* Heatmap Table */}
+          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 overflow-x-auto">
+            <div className="min-w-max">
+              <table className="w-full border-collapse">
+                <thead>
+                  <tr>
+                    <th className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 sticky left-0 bg-white z-10">Час</th>
+                    {weekDays.map((day, i) => (
+                      <th key={i} className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 min-w-16">
+                        <div>{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+                        <div className="text-gray-400 font-normal">{day.getDate()}</div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {Array.from({ length: 24 }, (_, hour) => (
+                    <tr key={hour} className="hover:bg-gray-50">
+                      <td className="p-1 text-xs text-gray-600 font-medium border-r border-gray-200 sticky left-0 bg-white">
+                        {hour.toString().padStart(2, '0')}:00
+                      </td>
+                      {weekDays.map((day, i) => {
+                        const cellActivities = getActivitiesForCell(day, hour);
+                        const cellColor = getCellColor(cellActivities);
+                        return (
+                          <td
+                            key={i}
+                            className={`p-1 border border-gray-100 ${cellColor} transition-all cursor-pointer hover:opacity-80 relative group`}
+                            onClick={() => {
+                              if (cellActivities.length > 0 && tg) {
+                                tg.HapticFeedback?.impactOccurred('light');
+                              }
+                            }}
+                          >
+                            {cellActivities.length > 0 && (
+                              <>
+                                <div className="h-8 w-full flex items-center justify-center">
+                                  <span className="text-xs font-semibold">{cellActivities.length}</span>
+                                </div>
+                                {/* Tooltip */}
+                                <div className="absolute left-0 top-full mt-1 bg-gray-900 text-white text-xs rounded-lg p-2 hidden group-hover:block z-20 whitespace-nowrap shadow-lg">
+                                  {cellActivities.map((act, idx) => {
+                                    const ActivityIcon = activityTypes[act.type]?.icon;
+                                    return (
+                                      <div key={idx} className="flex items-center gap-1 mb-1 last:mb-0">
+                                        {ActivityIcon && <ActivityIcon className="w-3 h-3" />}
+                                        <span>{activityTypes[act.type]?.label}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </>
+                            )}
+                            {cellActivities.length === 0 && <div className="h-8"></div>}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Legend */}
+          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
+            <h3 className="text-sm font-semibold mb-3 text-gray-700">Легенда</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+              {Object.entries(activityTypes).map(([key, data]) => {
+                const Icon = data.icon;
                 return (
-                  <div key={type} className={`${activityTypes[type].color} rounded-lg p-4`}>
-                    <div className="flex items-center mb-2">
-                      <ActivityIcon className="w-5 h-5 mr-2" />
-                      <span className="font-semibold">{activityTypes[type].label}</span>
-                    </div>
-                    <div className="ml-7">
-                      <div>Количество: {data.count}</div>
-                      {data.totalDuration > 0 && <div>Общее время: {formatDuration(0, data.totalDuration)}</div>}
-                      {data.totalAmount > 0 && <div>Общий объем: {data.totalAmount} мл</div>}
-                    </div>
+                  <div key={key} className={`${data.color} rounded-lg p-2 flex items-center gap-2`}>
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span className="text-xs font-medium">{data.label}</span>
                   </div>
                 );
               })}
-              {Object.keys(stats).length === 0 && (
-                <div className="text-center text-gray-500 py-8">Сегодня еще нет записей</div>
-              )}
             </div>
+          </div>
+
+          {/* Week Summary Statistics */}
+          <div className="bg-white rounded-2xl shadow-lg p-4">
+            <h3 className="text-sm font-semibold mb-3 text-gray-700">Сводка за неделю</h3>
+            {Object.keys(weekStats).length > 0 ? (
+              <div className="space-y-3">
+                {Object.entries(weekStats).map(([type, data]) => {
+                  const ActivityIcon = activityTypes[type]?.icon;
+                  return (
+                    <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
+                          <span className="font-semibold">{activityTypes[type]?.label}</span>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-semibold">{data.count} раз</div>
+                          {data.totalDuration > 0 && (
+                            <div className="text-sm opacity-75">
+                              {formatDuration(0, data.totalDuration)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center text-gray-500 py-4">На этой неделе нет записей</div>
+            )}
           </div>
         </div>
       </div>
@@ -697,7 +928,26 @@ const ActivityTracker = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
-      <div className="max-w-2xl mx-auto px-4 pt-4">
+      <div className="pt-4" />
+      
+      <div className="max-w-2xl mx-auto px-4">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4 bg-white rounded-2xl shadow-lg p-4">
+          <div className="flex items-center">
+            <Baby className="w-6 h-6 mr-2 text-purple-600" />
+            <h1 className="text-xl font-bold text-gray-800">Трекер малыша</h1>
+          </div>
+          <button 
+            onClick={() => { 
+              if (tg) tg.HapticFeedback?.impactOccurred('light'); 
+              setView('stats'); 
+            }} 
+            className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
+          >
+            <BarChart3 className="w-5 h-5" />
+          </button>
+        </div>
+
         {activeTimers.length > 0 && (
           <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
             <h3 className="text-sm font-semibold mb-3 text-gray-700">Активные таймеры</h3>
@@ -727,12 +977,6 @@ const ActivityTracker = () => {
         )}
 
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-bold text-gray-800">Трекер малыша</h1>
-            <button onClick={() => { if (tg) tg.HapticFeedback?.impactOccurred('light'); setView('stats'); }} className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform">
-              <BarChart3 className="w-5 h-5" />
-            </button>
-          </div>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(activityTypes).map(([key, data]) => {
               const Icon = data.icon;
