@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
-import * as supabaseModule from './utils/supabaseModule.supabase.js';
+import * as supabaseModule from './utils/supabase.js';
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -162,7 +162,7 @@ const ActivityTracker = () => {
           
           // Load baby profile
           try {
-            const profileResult = await supabaseModule.supabaseModule.babyHelpers.getProfile();
+            const profileResult = await supabaseModule.babyHelpers.getProfile();
             if (profileResult.data) {
               setBabyProfile({
                 name: profileResult.data.name || '',
@@ -176,7 +176,7 @@ const ActivityTracker = () => {
           
           // Load activities
           try {
-            const activitiesResult = await supabaseModule.supabaseModule.activityHelpers.getActivities();
+            const activitiesResult = await supabaseModule.activityHelpers.getActivities();
             if (activitiesResult.data) {
               setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
             }
@@ -186,7 +186,7 @@ const ActivityTracker = () => {
           
           // Load growth records
           try {
-            const growthResult = await supabaseModule.supabaseModule.growthHelpers.getRecords();
+            const growthResult = await supabaseModule.growthHelpers.getRecords();
             if (growthResult.data) {
               setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
             }
