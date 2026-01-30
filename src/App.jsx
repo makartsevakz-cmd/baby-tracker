@@ -1,20 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
-
-// Try to import Supabase, but don't fail if it's not available
-let supabase, authHelpers, babyHelpers, activityHelpers, growthHelpers, subscribeToActivities, subscribeToGrowthRecords;
-try {
-  const supabaseModule = await import('./utils/supabase.js');
-  supabase = supabaseModule.supabase;
-  authHelpers = supabaseModule.authHelpers;
-  babyHelpers = supabaseModule.babyHelpers;
-  activityHelpers = supabaseModule.activityHelpers;
-  growthHelpers = supabaseModule.growthHelpers;
-  subscribeToActivities = supabaseModule.subscribeToActivities;
-  subscribeToGrowthRecords = supabaseModule.subscribeToGrowthRecords;
-} catch (error) {
-  console.log('Supabase not configured, using localStorage');
-}
+import * as supabaseModule from './utils/supabaseModule.supabase.js';
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -155,13 +141,13 @@ const ActivityTracker = () => {
     
     try {
       // Check if we're in Telegram and if Supabase is configured
-      const hasSupabase = authHelpers && typeof authHelpers.signInWithTelegram === 'function';
+      const hasSupabase = supabaseModule.authHelpers && typeof supabaseModule.authHelpers.signInWithTelegram === 'function';
       
       if (hasSupabase && window.Telegram?.WebApp?.initDataUnsafe?.user) {
         const telegramUser = window.Telegram.WebApp.initDataUnsafe.user;
         
         try {
-          const { data, error } = await authHelpers.signInWithTelegram(telegramUser);
+          const { data, error } = await supabaseModule.authHelpers.signInWithTelegram(telegramUser);
           
           if (error) {
             console.error('Auth error:', error);
@@ -176,7 +162,7 @@ const ActivityTracker = () => {
           
           // Load baby profile
           try {
-            const profileResult = await babyHelpers.getProfile();
+            const profileResult = await supabaseModule.supabaseModule.babyHelpers.getProfile();
             if (profileResult.data) {
               setBabyProfile({
                 name: profileResult.data.name || '',
@@ -190,7 +176,7 @@ const ActivityTracker = () => {
           
           // Load activities
           try {
-            const activitiesResult = await activityHelpers.getActivities();
+            const activitiesResult = await supabaseModule.supabaseModule.activityHelpers.getActivities();
             if (activitiesResult.data) {
               setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
             }
@@ -200,7 +186,7 @@ const ActivityTracker = () => {
           
           // Load growth records
           try {
-            const growthResult = await growthHelpers.getRecords();
+            const growthResult = await supabaseModule.supabaseModule.growthHelpers.getRecords();
             if (growthResult.data) {
               setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
             }
@@ -327,11 +313,11 @@ const ActivityTracker = () => {
         const supabaseData = convertToSupabaseActivity(activityData);
         
         if (editingId) {
-          const { data, error } = await activityHelpers.updateActivity(editingId, supabaseData);
+          const { data, error } = await supabaseModule.activityHelpers.updateActivity(editingId, supabaseData);
           if (error) throw error;
           setActivities(prev => prev.map(a => a.id === editingId ? convertFromSupabaseActivity(data) : a));
         } else {
-          const { data, error } = await activityHelpers.createActivity(supabaseData);
+          const { data, error } = await supabaseModule.activityHelpers.createActivity(supabaseData);
           if (error) throw error;
           setActivities(prev => [convertFromSupabaseActivity(data), ...prev]);
         }
@@ -362,7 +348,7 @@ const ActivityTracker = () => {
     if (window.confirm('Удалить эту запись?')) {
       try {
         if (isAuthenticated) {
-          const { error } = await activityHelpers.deleteActivity(id);
+          const { error } = await supabaseModule.activityHelpers.deleteActivity(id);
           if (error) throw error;
         } else {
           localStorage.setItem('baby_activities', JSON.stringify(activities.filter(a => a.id !== id)));
@@ -513,7 +499,7 @@ const ActivityTracker = () => {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    const activitiesSubscription = subscribeToActivities((payload) => {
+    const activitiesSubscription = supabaseModule.subscribeToActivities((payload) => {
       console.log('Activity change:', payload);
       if (payload.eventType === 'INSERT') {
         setActivities(prev => [convertFromSupabaseActivity(payload.new), ...prev]);
@@ -524,7 +510,7 @@ const ActivityTracker = () => {
       }
     });
 
-    const growthSubscription = subscribeToGrowthRecords((payload) => {
+    const growthSubscription = supabaseModule.subscribeToGrowthRecords((payload) => {
       console.log('Growth change:', payload);
       if (payload.eventType === 'INSERT') {
         setGrowthData(prev => [...prev, convertFromSupabaseGrowth(payload.new)].sort((a, b) => new Date(a.date) - new Date(b.date)));
@@ -537,10 +523,10 @@ const ActivityTracker = () => {
 
     return () => {
       if (activitiesSubscription) {
-        supabase.removeChannel(activitiesSubscription);
+        supabaseModule.supabase.removeChannel(activitiesSubscription);
       }
       if (growthSubscription) {
-        supabase.removeChannel(growthSubscription);
+        supabaseModule.supabase.removeChannel(growthSubscription);
       }
     };
   }, [isAuthenticated]);
@@ -633,7 +619,7 @@ const ActivityTracker = () => {
     
     try {
       if (isAuthenticated) {
-        const { data, error } = await babyHelpers.upsertProfile({
+        const { data, error } = await supabaseModule.babyHelpers.upsertProfile({
           name: profileForm.name,
           birthDate: profileForm.birthDate,
           photo: profileForm.photo,
@@ -677,11 +663,11 @@ const ActivityTracker = () => {
     try {
       if (isAuthenticated) {
         if (editingGrowthId) {
-          const { data, error } = await growthHelpers.updateRecord(editingGrowthId, record);
+          const { data, error } = await supabaseModule.growthHelpers.updateRecord(editingGrowthId, record);
           if (error) throw error;
           setGrowthData(prev => prev.map(r => r.id === editingGrowthId ? convertFromSupabaseGrowth(data) : r));
         } else {
-          const { data, error } = await growthHelpers.createRecord(record);
+          const { data, error } = await supabaseModule.growthHelpers.createRecord(record);
           if (error) throw error;
           setGrowthData(prev => [...prev, convertFromSupabaseGrowth(data)].sort((a, b) => new Date(a.date) - new Date(b.date)));
         }
@@ -708,7 +694,7 @@ const ActivityTracker = () => {
       
       try {
         if (isAuthenticated) {
-          const { error } = await growthHelpers.deleteRecord(id);
+          const { error } = await supabaseModule.growthHelpers.deleteRecord(id);
           if (error) throw error;
         } else {
           localStorage.setItem('growth_data', JSON.stringify(growthData.filter(r => r.id !== id)));
