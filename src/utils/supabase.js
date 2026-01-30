@@ -43,6 +43,7 @@ export const authHelpers = {
             last_name: telegramUser.last_name,
             username: telegramUser.username,
           },
+          emailRedirectTo: undefined, // Don't send confirmation email
         },
       });
 
