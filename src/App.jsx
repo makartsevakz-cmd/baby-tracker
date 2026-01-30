@@ -1,14 +1,20 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
-import { 
-  supabase, 
-  authHelpers, 
-  babyHelpers, 
-  activityHelpers, 
-  growthHelpers,
-  subscribeToActivities,
-  subscribeToGrowthRecords
-} from './utils/supabase';
+
+// Try to import Supabase, but don't fail if it's not available
+let supabase, authHelpers, babyHelpers, activityHelpers, growthHelpers, subscribeToActivities, subscribeToGrowthRecords;
+try {
+  const supabaseModule = await import('./utils/supabase.js');
+  supabase = supabaseModule.supabase;
+  authHelpers = supabaseModule.authHelpers;
+  babyHelpers = supabaseModule.babyHelpers;
+  activityHelpers = supabaseModule.activityHelpers;
+  growthHelpers = supabaseModule.growthHelpers;
+  subscribeToActivities = supabaseModule.subscribeToActivities;
+  subscribeToGrowthRecords = supabaseModule.subscribeToGrowthRecords;
+} catch (error) {
+  console.log('Supabase not configured, using localStorage');
+}
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -139,53 +145,83 @@ const ActivityTracker = () => {
     setIsLoading(true);
     setAuthError(null);
     
+    // Set a timeout to prevent infinite loading
+    const loadTimeout = setTimeout(() => {
+      console.warn('Load timeout - falling back to localStorage');
+      setAuthError('Превышено время ожидания');
+      loadFromLocalStorage();
+      setIsLoading(false);
+    }, 10000); // 10 seconds timeout
+    
     try {
-      // Authenticate with Telegram
-      if (window.Telegram?.WebApp?.initDataUnsafe?.user) {
+      // Check if we're in Telegram and if Supabase is configured
+      const hasSupabase = authHelpers && typeof authHelpers.signInWithTelegram === 'function';
+      
+      if (hasSupabase && window.Telegram?.WebApp?.initDataUnsafe?.user) {
         const telegramUser = window.Telegram.WebApp.initDataUnsafe.user;
-        const { data, error } = await authHelpers.signInWithTelegram(telegramUser);
         
-        if (error) {
-          console.error('Auth error:', error);
-          setAuthError('Ошибка аутентификации');
-          // Fallback to localStorage
+        try {
+          const { data, error } = await authHelpers.signInWithTelegram(telegramUser);
+          
+          if (error) {
+            console.error('Auth error:', error);
+            setAuthError('Ошибка аутентификации - используется localStorage');
+            loadFromLocalStorage();
+            clearTimeout(loadTimeout);
+            setIsLoading(false);
+            return;
+          }
+          
+          setIsAuthenticated(true);
+          
+          // Load baby profile
+          try {
+            const profileResult = await babyHelpers.getProfile();
+            if (profileResult.data) {
+              setBabyProfile({
+                name: profileResult.data.name || '',
+                birthDate: profileResult.data.birth_date || '',
+                photo: profileResult.data.photo_url || null,
+              });
+            }
+          } catch (err) {
+            console.error('Profile load error:', err);
+          }
+          
+          // Load activities
+          try {
+            const activitiesResult = await activityHelpers.getActivities();
+            if (activitiesResult.data) {
+              setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
+            }
+          } catch (err) {
+            console.error('Activities load error:', err);
+          }
+          
+          // Load growth records
+          try {
+            const growthResult = await growthHelpers.getRecords();
+            if (growthResult.data) {
+              setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
+            }
+          } catch (err) {
+            console.error('Growth load error:', err);
+          }
+          
+          // Load timers from localStorage (they're temporary, not in DB)
+          const savedTimers = localStorage.getItem('active_timers');
+          const savedPaused = localStorage.getItem('paused_timers');
+          if (savedTimers) setTimers(JSON.parse(savedTimers));
+          if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
+          
+        } catch (supabaseError) {
+          console.error('Supabase error:', supabaseError);
+          setAuthError('Supabase недоступен - используется localStorage');
           loadFromLocalStorage();
-          return;
         }
-        
-        setIsAuthenticated(true);
-        
-        // Load baby profile
-        const profileResult = await babyHelpers.getProfile();
-        if (profileResult.data) {
-          setBabyProfile({
-            name: profileResult.data.name || '',
-            birthDate: profileResult.data.birth_date || '',
-            photo: profileResult.data.photo_url || null,
-          });
-        }
-        
-        // Load activities
-        const activitiesResult = await activityHelpers.getActivities();
-        if (activitiesResult.data) {
-          setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
-        }
-        
-        // Load growth records
-        const growthResult = await growthHelpers.getRecords();
-        if (growthResult.data) {
-          setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
-        }
-        
-        // Load timers from localStorage (they're temporary, not in DB)
-        const savedTimers = localStorage.getItem('active_timers');
-        const savedPaused = localStorage.getItem('paused_timers');
-        if (savedTimers) setTimers(JSON.parse(savedTimers));
-        if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
-        
       } else {
-        // Not in Telegram, use localStorage
-        console.log('Not in Telegram Web App, using localStorage');
+        // Not in Telegram or Supabase not configured, use localStorage
+        console.log('Using localStorage (no Telegram or Supabase)');
         loadFromLocalStorage();
       }
     } catch (error) {
@@ -193,6 +229,7 @@ const ActivityTracker = () => {
       setAuthError('Ошибка загрузки данных');
       loadFromLocalStorage();
     } finally {
+      clearTimeout(loadTimeout);
       setIsLoading(false);
     }
   }, []);
