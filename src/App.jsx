@@ -799,17 +799,12 @@ const ActivityTracker = () => {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        <div className="pt-2" />
+        {/* Отступ для Telegram заголовка */}
+        <div className="h-16" />
         
         <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center mb-6">
-              <button 
-                onClick={handleBack} 
-                className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
               <ActivityIcon className="w-6 h-6 mr-2" />
               <h2 className="text-xl font-semibold">{activityTypes[selectedActivity].label}</h2>
             </div>
@@ -992,22 +987,6 @@ const ActivityTracker = () => {
                 <label className="block mb-2 font-medium">Комментарий:</label>
                 <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder="Добавьте заметку..." />
               </div>
-
-              {/* Action Buttons */}
-              <div className="flex gap-3 pt-4">
-                <button
-                  onClick={handleBack}
-                  className="flex-1 bg-gray-500 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
-                >
-                  Отмена
-                </button>
-                <button
-                  onClick={saveActivity}
-                  className="flex-1 bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
-                >
-                  {editingId ? 'Обновить' : 'Сохранить'}
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -1018,20 +997,12 @@ const ActivityTracker = () => {
   if (view === 'profile') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        <div className="pt-2" />
+        {/* Отступ для Telegram заголовка */}
+        <div className="h-16" />
         
         <div className="max-w-2xl mx-auto px-4">
           {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
-            <button 
-              onClick={() => { 
-                if (tg) tg.HapticFeedback?.impactOccurred('light'); 
-                setView('main'); 
-              }} 
-              className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
             <Baby className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Профиль малыша</h2>
           </div>
@@ -1380,17 +1351,12 @@ const ActivityTracker = () => {
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        <div className="pt-2" />
+        {/* Отступ для Telegram заголовка */}
+        <div className="h-16" />
         
         <div className="max-w-7xl mx-auto px-4">
-          {/* Header with back button */}
+          {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
-            <button 
-              onClick={handleBack} 
-              className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
             <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Статистика</h2>
           </div>
@@ -1575,7 +1541,8 @@ const ActivityTracker = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
-      <div className="pt-4" />
+      {/* Отступ для Telegram заголовка */}
+      <div className="h-14" />
       
       <div className="max-w-2xl mx-auto px-4">
         {/* Header */}
