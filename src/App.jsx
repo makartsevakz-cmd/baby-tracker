@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
+import * as notificationsModule from './utils/notifications.js';
+import NotificationsView from './components/NotificationsView.jsx';
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -1538,7 +1540,20 @@ const ActivityTracker = () => {
       </div>
     );
   }
-
+  if (view === 'notifications') {
+      return (
+        <NotificationsView
+          tg={tg}
+          onBack={() => {
+            if (tg) tg.HapticFeedback?.impactOccurred('light');
+            setView('main');
+          }}
+          activityTypes={activityTypes}
+          notificationHelpers={notificationsModule.notificationHelpers}
+          isAuthenticated={isAuthenticated}
+        />
+      );
+    }
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
       {/* Отступ для Telegram заголовка */}
@@ -1578,6 +1593,19 @@ const ActivityTracker = () => {
             >
               <Baby className="w-5 h-5" />
             </button>
+            
+            {/* НОВАЯ КНОПКА */}
+            <button 
+              onClick={() => { 
+                if (tg) tg.HapticFeedback?.impactOccurred('light'); 
+                setView('notifications'); 
+              }} 
+              className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
+              title="Уведомления"
+            >
+              <Bell className="w-5 h-5" />
+            </button>
+            
             <button 
               onClick={() => { 
                 if (tg) tg.HapticFeedback?.impactOccurred('light'); 
