@@ -22,6 +22,8 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const sentNotifications = new Map();
 
 // Проверка уведомлений каждую минуту
+// ⚠️ node-cron работает только на постоянно запущенных серверах (Railway, Heroku, VPS)
+// На Vercel используйте endpoint GET /api/cron + Vercel Cron Jobs
 cron.schedule('* * * * *', async () => {
   console.log('Checking notifications at', new Date().toISOString());
   await checkAndSendNotifications();
@@ -29,16 +31,10 @@ cron.schedule('* * * * *', async () => {
 
 async function checkAndSendNotifications() {
   try {
-    // Получить все активные уведомления с информацией о пользователях
+    // Получить все активные уведомления
     const { data: notifications, error } = await supabase
       .from('notifications')
-      .select(`
-        *,
-        users:user_id (
-          id,
-          raw_user_meta_data
-        )
-      `)
+      .select('*')
       .eq('enabled', true);
     
     if (error) {
@@ -53,12 +49,22 @@ async function checkAndSendNotifications() {
     
     console.log(`Found ${notifications.length} active notifications`);
     
+    // Кэш: telegram_id по user_id (чтобы не делать запрос для каждого уведомления)
+    const telegramIdCache = {};
+    
     const now = new Date();
     
     for (const notification of notifications) {
       try {
-        // Получить Telegram ID пользователя
-        const telegramId = notification.users?.raw_user_meta_data?.telegram_id;
+        // Получить Telegram ID пользователя (с кэшем)
+        let telegramId = telegramIdCache[notification.user_id];
+        if (!telegramId) {
+          const { data: user } = await supabase.auth.admin.getUserById(notification.user_id);
+          telegramId = user?.user_metadata?.telegram_id;
+          if (telegramId) {
+            telegramIdCache[notification.user_id] = telegramId;
+          }
+        }
         
         if (!telegramId) {
           console.log(`No Telegram ID for user ${notification.user_id}`);
@@ -231,11 +237,15 @@ function cleanupSentNotifications() {
   const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
   
   for (const [key] of sentNotifications) {
-    // Извлечь timestamp из ключа
-    const timestamp = key.split('-').slice(-5).join('-'); // последние 5 частей это timestamp
+    // Ключ формат: "notificationId-2026-01-31T07:30"
+    // Берём всё после первого "-" как timestamp
+    const dashIndex = key.indexOf('-');
+    if (dashIndex === -1) continue;
+    
+    const timestamp = key.substring(dashIndex + 1);
     const keyTime = new Date(timestamp).getTime();
     
-    if (keyTime < twoHoursAgo) {
+    if (isNaN(keyTime) || keyTime < twoHoursAgo) {
       sentNotifications.delete(key);
     }
   }
@@ -250,6 +260,17 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Cron endpoint для Vercel Cron Jobs
+// Настройте в Vercel Dashboard: Settings → Cron Jobs → добавьте "0 * * * * *" (каждую минуту) на путь /api/cron
+app.get('/api/cron', async (req, res) => {
+  try {
+    await checkAndSendNotifications();
+    res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 // Manual trigger endpoint (для тестирования)
 app.post('/trigger', async (req, res) => {
   try {
@@ -261,7 +282,7 @@ app.post('/trigger', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Notification service running on port ${PORT}`);
   console.log('Cron job scheduled to run every minute');
 });
@@ -269,6 +290,13 @@ app.listen(PORT, () => {
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM signal received: closing HTTP server');
+  server.close(() => {
+    console.log('HTTP server closed');
+  });
+});
+
+process.on('SIGINT', () => {
+  console.log('SIGINT signal received: closing HTTP server');
   server.close(() => {
     console.log('HTTP server closed');
   });
