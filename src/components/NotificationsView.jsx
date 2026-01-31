@@ -54,23 +54,62 @@ const NotificationsView = ({
     loadNotifications();
   }, [isAuthenticated]);
 
+  // ── Конвертация локальное ↔ UTC ──────────────────────────────────────────
+  const localTimeToUTC = (localHHMM) => {
+    if (!localHHMM) return localHHMM;
+    const [h, m] = localHHMM.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, m, 0, 0);
+    return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}`;
+  };
+
+  const utcTimeToLocal = (utcHHMM) => {
+    if (!utcHHMM) return utcHHMM;
+    const [h, m] = utcHHMM.split(':').map(Number);
+    const d = new Date();
+    d.setUTCHours(h, m, 0, 0);
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+  };
+
+  // Сдвиг дней недели при смене суток из-за часового пояса
+  const shiftDays = (days, shift) => {
+    if (!days || shift === 0) return days;
+    return days.map(d => ((d + shift) % 7 + 7) % 7);
+  };
+
+  const getDayShift = (localHHMM) => {
+    if (!localHHMM) return 0;
+    const [h] = localHHMM.split(':').map(Number);
+    const d = new Date();
+    d.setHours(h, 0, 0, 0);
+    return d.getUTCDate() - d.getDate(); // -1, 0, или +1
+  };
+  // ───────────────────────────────────────────────────────────────────────────
+
   const saveNotification = async () => {
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
 
-    const notificationData = {
+    // Конвертируем время и дни в UTC перед сохранением в БД
+    const dayShift = getDayShift(formData.notificationTime);
+    const saveData = {
       ...formData,
+      notificationTime: localTimeToUTC(formData.notificationTime),
+      repeatDays: shiftDays(formData.repeatDays, dayShift),
+    };
+
+    const notificationData = {
+      ...saveData,
       id: editingId || Date.now(),
-      timezone_offset: new Date().getTimezoneOffset(),
     };
 
     try {
       if (isAuthenticated && notificationHelpers) {
         if (editingId) {
-          const { data, error } = await notificationHelpers.updateNotification(editingId, notificationData);
+          const { data, error } = await notificationHelpers.updateNotification(editingId, saveData);
           if (error) throw error;
           setNotifications(prev => prev.map(n => n.id === editingId ? data : n));
         } else {
-          const { data, error } = await notificationHelpers.createNotification(notificationData);
+          const { data, error } = await notificationHelpers.createNotification(saveData);
           if (error) throw error;
           setNotifications(prev => [data, ...prev]);
         }
@@ -131,12 +170,21 @@ const NotificationsView = ({
   const editNotification = (notification) => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     setEditingId(notification.id);
+
+    const rawTime = notification.notification_time || notification.notificationTime || '09:00';
+    const rawDays = notification.repeat_days || notification.repeatDays || [0, 1, 2, 3, 4, 5, 6];
+
+    // Переводим UTC обратно в локальное время для отображения
+    const localTime = utcTimeToLocal(rawTime);
+    const dayShift  = getDayShift(localTime);
+    const localDays = shiftDays(rawDays, -dayShift);
+
     setFormData({
       activityType: notification.activity_type || notification.activityType,
       notificationType: notification.notification_type || notification.notificationType,
       enabled: notification.enabled,
-      notificationTime: notification.notification_time || notification.notificationTime || '09:00',
-      repeatDays: notification.repeat_days || notification.repeatDays || [0, 1, 2, 3, 4, 5, 6],
+      notificationTime: localTime,
+      repeatDays: localDays,
       intervalMinutes: notification.interval_minutes || notification.intervalMinutes || 180,
       title: notification.title || '',
       message: notification.message || '',
@@ -172,8 +220,11 @@ const NotificationsView = ({
     const activityLabel = activityTypes[notification.activity_type || notification.activityType]?.label || 'Активность';
     
     if ((notification.notification_type || notification.notificationType) === 'time') {
-      const time = notification.notification_time || notification.notificationTime;
-      const days = notification.repeat_days || notification.repeatDays || [];
+      const rawTime = notification.notification_time || notification.notificationTime;
+      const time = utcTimeToLocal(rawTime); // UTC → локальное время для отображения
+      const rawDays = notification.repeat_days || notification.repeatDays || [];
+      const dayShift = getDayShift(time);
+      const days = shiftDays(rawDays, -dayShift); // UTC-дни → локальные дни
       
       let daysText = '';
       if (days.length === 7) {
