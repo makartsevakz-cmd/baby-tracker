@@ -60,16 +60,17 @@ const NotificationsView = ({
     const notificationData = {
       ...formData,
       id: editingId || Date.now(),
+      timezone_offset: new Date().getTimezoneOffset(),
     };
 
     try {
       if (isAuthenticated && notificationHelpers) {
         if (editingId) {
-          const { data, error } = await notificationHelpers.updateNotification(editingId, formData);
+          const { data, error } = await notificationHelpers.updateNotification(editingId, notificationData);
           if (error) throw error;
           setNotifications(prev => prev.map(n => n.id === editingId ? data : n));
         } else {
-          const { data, error } = await notificationHelpers.createNotification(formData);
+          const { data, error } = await notificationHelpers.createNotification(notificationData);
           if (error) throw error;
           setNotifications(prev => [data, ...prev]);
         }
