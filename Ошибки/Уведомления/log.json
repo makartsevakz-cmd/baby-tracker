@@ -1,0 +1,23 @@
+{
+  "event_message": "No Telegram ID for user 4d64bfe3-cd3f-4ed3-b995-9023771bdd7e\n",
+  "id": "7fedcf49-81aa-4a9b-8d7c-5ebfde68c1ed",
+  "metadata": [
+    {
+      "boot_time": null,
+      "cpu_time_used": null,
+      "deployment_id": "cjxlexwqqtspuswrgffx_61e4a7c4-59ed-48ea-98be-d5971223aef2_2",
+      "event_type": "Log",
+      "execution_id": "fe12ccca-429d-4bbd-867f-d5ebe8d5f0b7",
+      "function_id": "61e4a7c4-59ed-48ea-98be-d5971223aef2",
+      "level": "info",
+      "memory_used": [],
+      "project_ref": "cjxlexwqqtspuswrgffx",
+      "reason": null,
+      "region": "eu-central-1",
+      "served_by": "supabase-edge-runtime-1.70.0 (compatible with Deno v2.1.4)",
+      "timestamp": "2026-01-31T08:39:49.715Z",
+      "version": "2"
+    }
+  ],
+  "timestamp": 1769848789715000
+}
