@@ -230,15 +230,49 @@ bot.on('polling_error', (error) => {
   console.error('Polling error:', error);
 });
 
+// ============================================
+// Health Check для Render.com
+// ============================================
+
+const http = require('http');
+const PORT = process.env.PORT || 3000;
+
+const server = http.createServer((req, res) => {
+  if (req.url === '/health' || req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      status: 'ok',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      bot: 'Baby Tracker Bot',
+      message: 'Bot is running'
+    }));
+    console.log(`Health check request from: ${req.socket.remoteAddress}`);
+  } else {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not Found');
+  }
+});
+
+server.listen(PORT, () => {
+  console.log(`🌐 Health check server running on port ${PORT}`);
+});
+
+// ============================================
+// Конец Health Check
+// ============================================
+
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n👋 Остановка бота...');
   bot.stopPolling();
+  server.close();
   process.exit(0);
 });
 
 process.on('SIGTERM', () => {
   console.log('\n👋 Остановка бота...');
   bot.stopPolling();
+  server.close();
   process.exit(0);
 });
