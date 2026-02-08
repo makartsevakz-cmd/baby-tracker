@@ -11,25 +11,47 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 export const authHelpers = {
   // Sign in with Telegram user data
   async signInWithTelegram(telegramUser) {
-    try {
-      // Use Telegram user ID as unique identifier
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: `telegram_${telegramUser.id}@temp.com`,
-        password: `telegram_${telegramUser.id}_${telegramUser.auth_date}`,
-      });
+  try {
+    // Use Telegram user ID as unique identifier
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: `telegram_${telegramUser.id}@temp.com`,
+      password: `telegram_${telegramUser.id}_${telegramUser.auth_date}`,
+    });
 
-      if (error && error.message.includes('Invalid login credentials')) {
-        // User doesn't exist, create account
-        return await this.signUpWithTelegram(telegramUser);
-      }
-
-      if (error) throw error;
-      return { data, error: null };
-    } catch (error) {
-      console.error('Sign in error:', error);
-      return { data: null, error };
+    if (error && error.message.includes('Invalid login credentials')) {
+      // User doesn't exist, create account
+      return await this.signUpWithTelegram(telegramUser);
     }
-  },
+
+    if (error) throw error;
+
+    // ✅ КРИТИЧЕСКИ ВАЖНО: Обновить telegram_id если его нет в метаданных
+    // Это исправляет существующих пользователей, у которых не был сохранён telegram_id
+    if (data?.user && !data.user.user_metadata?.telegram_id) {
+      console.log('🔧 Updating missing telegram_id for user:', data.user.id);
+      
+      const { error: updateError } = await supabase.auth.updateUser({
+        data: {
+          telegram_id: telegramUser.id,
+          first_name: telegramUser.first_name,
+          last_name: telegramUser.last_name,
+          username: telegramUser.username,
+        }
+      });
+      
+      if (updateError) {
+        console.error('Failed to update telegram_id:', updateError);
+      } else {
+        console.log('✅ telegram_id updated successfully');
+      }
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    console.error('Sign in error:', error);
+    return { data: null, error };
+  }
+},
 
   async signUpWithTelegram(telegramUser) {
     try {
