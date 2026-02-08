@@ -69,13 +69,17 @@ export const authHelpers = {
 // Baby profile helpers
 export const babyHelpers = {
   async getProfile() {
-    const { data, error } = await supabase
-      .from('babies')
-      .select('*')
-      .single();
-    
-    return { data, error };
-  },
+  const user = await authHelpers.getCurrentUser();
+  if (!user) return { data: null, error: 'Not authenticated' };
+  
+  const { data, error } = await supabase
+    .from('babies')
+    .select('*')
+    .eq('user_id', user.id)
+    .maybeSingle(); // ← ИЗМЕНИЛИ на maybeSingle()
+  
+  return { data, error };
+},
 
   async createProfile(profile) {
     const user = await authHelpers.getCurrentUser();
