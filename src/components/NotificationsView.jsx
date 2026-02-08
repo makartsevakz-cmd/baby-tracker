@@ -259,7 +259,8 @@ const NotificationsView = ({
     
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        <div className="pt-2" />
+        {/* Отступ для Telegram заголовка */}
+        <div className="h-16" />
         
         <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
@@ -428,7 +429,8 @@ const NotificationsView = ({
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-      <div className="pt-2" />
+      {/* Отступ для Telegram заголовка */}
+      <div className="h-16" />
       
       <div className="max-w-2xl mx-auto px-4">
         {/* Header */}
@@ -550,4 +552,4 @@ const NotificationsView = ({
   );
 };
 
-export default NotificationsView;
+export default NotificationsView; 

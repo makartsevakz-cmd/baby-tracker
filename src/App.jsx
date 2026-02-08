@@ -63,9 +63,14 @@ const ActivityTracker = () => {
 
   const formatDuration = (start, end) => {
     const diff = new Date(end) - new Date(start);
-    const hours = Math.floor(diff / 3600000);
-    const minutes = Math.floor((diff % 3600000) / 60000);
-    return hours > 0 ? `${hours}ч ${minutes}м` : `${minutes}м`;
+    const minutes = Math.floor(diff / 60000);
+    
+    // Don't show duration if less than 1 minute
+    if (minutes < 1) return '';
+    
+    const hours = Math.floor(minutes / 60);
+    const remainingMinutes = minutes % 60;
+    return hours > 0 ? `${hours}ч ${remainingMinutes}м` : `${remainingMinutes}м`;
   };
 
   const getTimerDuration = (startTime, pausedDuration = 0) => {
@@ -583,7 +588,7 @@ const ActivityTracker = () => {
     setView('add');
   };
 
-  // Get time since last activity of this type
+  // Get time since last activity of this type with improved formatting
   const getTimeSinceLastActivity = (type) => {
     const typeActivities = activities.filter(a => a.type === type);
     if (typeActivities.length === 0) return null;
@@ -603,10 +608,33 @@ const ActivityTracker = () => {
     const lastTimeMs = new Date(lastTime).getTime();
     const diffMs = now - lastTimeMs;
     
-    const hours = Math.floor(diffMs / 3600000);
-    const minutes = Math.floor((diffMs % 3600000) / 60000);
+    // Calculate time components
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
     
-    if (hours > 0) {
+    // Format based on time elapsed
+    if (days >= 365) {
+      const years = Math.floor(days / 365);
+      const remainingDays = days % 365;
+      if (remainingDays > 30) {
+        const months = Math.floor(remainingDays / 30);
+        return `${years}г ${months}мес назад`;
+      }
+      return `${years}г назад`;
+    } else if (days >= 30) {
+      const months = Math.floor(days / 30);
+      const remainingDays = days % 30;
+      if (remainingDays > 0) {
+        return `${months}мес ${remainingDays}д назад`;
+      }
+      return `${months}мес назад`;
+    } else if (days > 0) {
+      if (hours > 0) {
+        return `${days}д ${hours}ч назад`;
+      }
+      return `${days}д назад`;
+    } else if (hours > 0) {
       return `${hours}ч ${minutes}м назад`;
     } else if (minutes > 0) {
       return `${minutes}м назад`;
@@ -1145,7 +1173,7 @@ const ActivityTracker = () => {
               </div>
             )}
 
-            {/* Simple Growth Chart */}
+            {/* Improved Growth Chart with connecting lines */}
             {growthData.length > 1 && (
               <div className="mt-6 pt-6 border-t border-gray-200">
                 <h4 className="font-medium text-sm text-gray-700 mb-3">Динамика:</h4>
@@ -1154,23 +1182,51 @@ const ActivityTracker = () => {
                   {growthData.some(r => r.weight) && (
                     <div>
                       <div className="text-sm font-medium text-gray-600 mb-2">Вес (кг)</div>
-                      <div className="flex items-end justify-between h-32 border-b border-l border-gray-300 pl-2 pb-2">
-                        {growthData.filter(r => r.weight).map((record, idx) => {
-                          const maxWeight = Math.max(...growthData.filter(r => r.weight).map(r => r.weight));
-                          const height = (record.weight / maxWeight) * 100;
-                          return (
-                            <div key={record.id} className="flex flex-col items-center flex-1 mx-1">
-                              <div className="text-xs font-semibold mb-1">{record.weight}</div>
-                              <div 
-                                className="w-full bg-purple-400 rounded-t"
-                                style={{ height: `${height}%` }}
+                      <div className="relative h-32 border-b-2 border-l-2 border-gray-300 pl-2 pb-2">
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+                          {/* Draw connecting lines */}
+                          {growthData.filter(r => r.weight).map((record, idx, arr) => {
+                            if (idx === arr.length - 1) return null;
+                            
+                            const maxWeight = Math.max(...arr.map(r => r.weight));
+                            const x1 = (idx / (arr.length - 1)) * 100;
+                            const y1 = 100 - (record.weight / maxWeight * 100);
+                            const x2 = ((idx + 1) / (arr.length - 1)) * 100;
+                            const y2 = 100 - (arr[idx + 1].weight / maxWeight * 100);
+                            
+                            return (
+                              <line
+                                key={record.id}
+                                x1={`${x1}%`}
+                                y1={`${y1}%`}
+                                x2={`${x2}%`}
+                                y2={`${y2}%`}
+                                stroke="#db2777"
+                                strokeWidth="2"
                               />
-                              <div className="text-xs text-gray-500 mt-1">
-                                {new Date(record.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}
+                            );
+                          })}
+                        </svg>
+                        <div className="flex items-end justify-between h-full">
+                          {growthData.filter(r => r.weight).map((record) => {
+                            const maxWeight = Math.max(...growthData.filter(r => r.weight).map(r => r.weight));
+                            const height = (record.weight / maxWeight) * 100;
+                            return (
+                              <div key={record.id} className="flex flex-col items-center flex-1 mx-1 relative">
+                                <div className="text-xs font-semibold mb-1 absolute" style={{ bottom: `${height}%` }}>
+                                  {record.weight}
+                                </div>
+                                <div 
+                                  className="w-full bg-pink-400 rounded-t"
+                                  style={{ height: `${height}%` }}
+                                />
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {new Date(record.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1179,24 +1235,53 @@ const ActivityTracker = () => {
                   {growthData.some(r => r.height) && (
                     <div>
                       <div className="text-sm font-medium text-gray-600 mb-2">Рост (см)</div>
-                      <div className="flex items-end justify-between h-32 border-b border-l border-gray-300 pl-2 pb-2">
-                        {growthData.filter(r => r.height).map((record, idx) => {
-                          const maxHeight = Math.max(...growthData.filter(r => r.height).map(r => r.height));
-                          const minHeight = Math.min(...growthData.filter(r => r.height).map(r => r.height));
-                          const height = ((record.height - minHeight) / (maxHeight - minHeight)) * 100 || 50;
-                          return (
-                            <div key={record.id} className="flex flex-col items-center flex-1 mx-1">
-                              <div className="text-xs font-semibold mb-1">{record.height}</div>
-                              <div 
-                                className="w-full bg-blue-400 rounded-t"
-                                style={{ height: `${height}%`, minHeight: '20%' }}
+                      <div className="relative h-32 border-b-2 border-l-2 border-gray-300 pl-2 pb-2">
+                        <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ overflow: 'visible' }}>
+                          {/* Draw connecting lines */}
+                          {growthData.filter(r => r.height).map((record, idx, arr) => {
+                            if (idx === arr.length - 1) return null;
+                            
+                            const maxHeight = Math.max(...arr.map(r => r.height));
+                            const minHeight = Math.min(...arr.map(r => r.height));
+                            const x1 = (idx / (arr.length - 1)) * 100;
+                            const y1 = 100 - (((record.height - minHeight) / (maxHeight - minHeight)) * 100 || 50);
+                            const x2 = ((idx + 1) / (arr.length - 1)) * 100;
+                            const y2 = 100 - (((arr[idx + 1].height - minHeight) / (maxHeight - minHeight)) * 100 || 50);
+                            
+                            return (
+                              <line
+                                key={record.id}
+                                x1={`${x1}%`}
+                                y1={`${y1}%`}
+                                x2={`${x2}%`}
+                                y2={`${y2}%`}
+                                stroke="#3b82f6"
+                                strokeWidth="2"
                               />
-                              <div className="text-xs text-gray-500 mt-1">
-                                {new Date(record.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}
+                            );
+                          })}
+                        </svg>
+                        <div className="flex items-end justify-between h-full">
+                          {growthData.filter(r => r.height).map((record) => {
+                            const maxHeight = Math.max(...growthData.filter(r => r.height).map(r => r.height));
+                            const minHeight = Math.min(...growthData.filter(r => r.height).map(r => r.height));
+                            const height = ((record.height - minHeight) / (maxHeight - minHeight)) * 100 || 50;
+                            return (
+                              <div key={record.id} className="flex flex-col items-center flex-1 mx-1 relative">
+                                <div className="text-xs font-semibold mb-1 absolute" style={{ bottom: `${height}%` }}>
+                                  {record.height}
+                                </div>
+                                <div 
+                                  className="w-full bg-blue-400 rounded-t"
+                                  style={{ height: `${height}%`, minHeight: '20%' }}
+                                />
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {new Date(record.date).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })}
+                                </div>
                               </div>
-                            </div>
-                          );
-                        })}
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1512,6 +1597,7 @@ const ActivityTracker = () => {
               <div className="space-y-3">
                 {Object.entries(weekStats).map(([type, data]) => {
                   const ActivityIcon = activityTypes[type]?.icon;
+                  const duration = formatDuration(0, data.totalDuration);
                   return (
                     <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
                       <div className="flex items-center justify-between">
@@ -1521,9 +1607,9 @@ const ActivityTracker = () => {
                         </div>
                         <div className="text-right">
                           <div className="font-semibold">{data.count} раз</div>
-                          {data.totalDuration > 0 && (
+                          {duration && (
                             <div className="text-sm opacity-75">
-                              {formatDuration(0, data.totalDuration)}
+                              {duration}
                             </div>
                           )}
                         </div>
@@ -1540,20 +1626,22 @@ const ActivityTracker = () => {
       </div>
     );
   }
+
   if (view === 'notifications') {
-      return (
-        <NotificationsView
-          tg={tg}
-          onBack={() => {
-            if (tg) tg.HapticFeedback?.impactOccurred('light');
-            setView('main');
-          }}
-          activityTypes={activityTypes}
-          notificationHelpers={notificationsModule.notificationHelpers}
-          isAuthenticated={isAuthenticated}
-        />
-      );
-    }
+    return (
+      <NotificationsView
+        tg={tg}
+        onBack={() => {
+          if (tg) tg.HapticFeedback?.impactOccurred('light');
+          setView('main');
+        }}
+        activityTypes={activityTypes}
+        notificationHelpers={notificationsModule.notificationHelpers}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
       {/* Отступ для Telegram заголовка */}
@@ -1594,7 +1682,6 @@ const ActivityTracker = () => {
               <Baby className="w-5 h-5" />
             </button>
             
-            {/* НОВАЯ КНОПКА */}
             <button 
               onClick={() => { 
                 if (tg) tg.HapticFeedback?.impactOccurred('light'); 
@@ -1670,6 +1757,8 @@ const ActivityTracker = () => {
           <div className="space-y-3">
             {activities.slice(0, 10).map(activity => {
               const ActivityIcon = activityTypes[activity.type].icon;
+              const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
+              
               return (
                 <div key={activity.id} className={`${activityTypes[activity.type].color} rounded-lg p-3`}>
                   <div className="flex items-start justify-between">
@@ -1679,7 +1768,7 @@ const ActivityTracker = () => {
                         <div className="font-medium">{activityTypes[activity.type].label}</div>
                         <div className="text-sm opacity-75">
                           {activity.startTime && formatTime(activity.startTime)}
-                          {activity.endTime && activity.startTime && ` - ${formatTime(activity.endTime)} (${formatDuration(activity.startTime, activity.endTime)})`}
+                          {duration && ` - ${formatTime(activity.endTime)} (${duration})`}
                         </div>
                         {activity.type === 'breastfeeding' && (
                           <div className="text-sm opacity-75">Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>
