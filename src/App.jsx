@@ -26,6 +26,7 @@ const ActivityTracker = () => {
   const [editingGrowthId, setEditingGrowthId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false); // Prevent double saves
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -272,12 +273,21 @@ const ActivityTracker = () => {
   };
 
   const saveActivity = useCallback(async () => {
+    // Prevent double saves
+    if (isSaving) {
+      console.log('Already saving, ignoring duplicate request');
+      return;
+    }
+    
+    setIsSaving(true);
+    
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
     
     // Validate required fields
     if (!formData.type || !formData.startTime) {
       if (tg) tg.HapticFeedback?.notificationOccurred('error');
       alert('Пожалуйста, заполните обязательные поля');
+      setIsSaving(false);
       return;
     }
     
@@ -341,6 +351,7 @@ const ActivityTracker = () => {
       console.error('Save activity error:', error);
       if (tg) tg.HapticFeedback?.notificationOccurred('error');
       alert('Ошибка сохранения активности');
+      setIsSaving(false);
       return;
     }
     
@@ -348,7 +359,8 @@ const ActivityTracker = () => {
     setSelectedActivity(null);
     setFormData({});
     setEditingId(null);
-  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer, isAuthenticated, activities]);
+    setIsSaving(false);
+  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer, isAuthenticated, activities, isSaving]);
 
   const deleteActivity = async (id) => {
     if (tg) tg.HapticFeedback?.notificationOccurred('warning');

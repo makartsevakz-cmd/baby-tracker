@@ -12,6 +12,7 @@ const NotificationsView = ({
   const [notifications, setNotifications] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  const [isSaving, setIsSaving] = useState(false); // Prevent double saves
   const [formData, setFormData] = useState({
     activityType: 'breastfeeding',
     notificationType: 'time',
@@ -87,6 +88,14 @@ const NotificationsView = ({
   // ───────────────────────────────────────────────────────────────────────────
 
   const saveNotification = async () => {
+    // Prevent double saves
+    if (isSaving) {
+      console.log('Already saving notification, ignoring duplicate request');
+      return;
+    }
+    
+    setIsSaving(true);
+    
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
 
     // Конвертируем время и дни в UTC перед сохранением в БД
@@ -125,10 +134,12 @@ const NotificationsView = ({
     } catch (error) {
       console.error('Save notification error:', error);
       alert('Ошибка сохранения уведомления');
+      setIsSaving(false);
       return;
     }
 
     resetForm();
+    setIsSaving(false);
   };
 
   const deleteNotification = async (id) => {
@@ -552,4 +563,4 @@ const NotificationsView = ({
   );
 };
 
-export default NotificationsView; 
+export default NotificationsView;
