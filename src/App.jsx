@@ -27,6 +27,8 @@ const ActivityTracker = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [authError, setAuthError] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
+  const [isSavingProfile, setIsSavingProfile] = useState(false); // Profile save state
+  const [isSavingGrowth, setIsSavingGrowth] = useState(false); // Growth save state
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -471,7 +473,16 @@ const ActivityTracker = () => {
       tg.BackButton.onClick(handleBack);
       
       if (view === 'add') {
-        tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
+        // Обновляем текст и состояние кнопки в зависимости от isSaving
+        if (isSaving) {
+          tg.MainButton.setText('Сохранение...');
+          tg.MainButton.showProgress(false); // Показываем прогресс
+          tg.MainButton.disable(); // Блокируем кнопку
+        } else {
+          tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
+          tg.MainButton.hideProgress();
+          tg.MainButton.enable();
+        }
         tg.MainButton.show();
         tg.MainButton.onClick(saveActivity);
       } else {
@@ -483,7 +494,7 @@ const ActivityTracker = () => {
       tg.BackButton.offClick(handleBack);
       tg.MainButton.offClick(saveActivity);
     };
-  }, [view, tg, handleBack, saveActivity, editingId]);
+  }, [view, tg, handleBack, saveActivity, editingId, isSaving]);
 
   useEffect(() => {
     if (!isLoading) {
@@ -657,6 +668,9 @@ const ActivityTracker = () => {
 
   // Profile functions
   const saveProfile = useCallback(async () => {
+    if (isSavingProfile) return; // Prevent double saves
+    
+    setIsSavingProfile(true);
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
     
     try {
@@ -680,10 +694,14 @@ const ActivityTracker = () => {
     } catch (error) {
       console.error('Save profile error:', error);
       alert('Ошибка сохранения профиля');
+    } finally {
+      setIsSavingProfile(false);
     }
-  }, [profileForm, tg, isAuthenticated]);
+  }, [profileForm, tg, isAuthenticated, isSavingProfile]);
 
   const addGrowthRecord = useCallback(async () => {
+    if (isSavingGrowth) return; // Prevent double saves
+    
     if (!growthForm.date) {
       alert('Укажите дату измерения');
       return;
@@ -693,6 +711,7 @@ const ActivityTracker = () => {
       return;
     }
 
+    setIsSavingGrowth(true);
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
 
     const record = {
@@ -727,8 +746,10 @@ const ActivityTracker = () => {
     } catch (error) {
       console.error('Save growth record error:', error);
       alert('Ошибка сохранения записи');
+    } finally {
+      setIsSavingGrowth(false);
     }
-  }, [growthForm, editingGrowthId, tg, isAuthenticated, growthData]);
+  }, [growthForm, editingGrowthId, tg, isAuthenticated, growthData, isSavingGrowth]);
 
   const deleteGrowthRecord = useCallback(async (id) => {
     if (window.confirm('Удалить запись?')) {
@@ -1079,9 +1100,22 @@ const ActivityTracker = () => {
               </div>
               <button
                 onClick={saveProfile}
-                className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium active:scale-95 transition-transform"
+                disabled={isSavingProfile}
+                className={`w-full bg-purple-600 text-white py-3 rounded-lg font-medium transition-all ${
+                  isSavingProfile ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'
+                }`}
               >
-                Сохранить профиль
+                {isSavingProfile ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    Сохранение...
+                  </span>
+                ) : (
+                  'Сохранить профиль'
+                )}
               </button>
             </div>
           </div>
@@ -1139,9 +1173,22 @@ const ActivityTracker = () => {
                 )}
                 <button
                   onClick={addGrowthRecord}
-                  className="flex-1 bg-purple-600 text-white py-2 rounded-lg text-sm font-medium active:scale-95 transition-transform"
+                  disabled={isSavingGrowth}
+                  className={`flex-1 bg-purple-600 text-white py-2 rounded-lg text-sm font-medium transition-all ${
+                    isSavingGrowth ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'
+                  }`}
                 >
-                  {editingGrowthId ? 'Обновить' : 'Добавить'}
+                  {isSavingGrowth ? (
+                    <span className="flex items-center justify-center gap-2">
+                      <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Сохранение...
+                    </span>
+                  ) : (
+                    editingGrowthId ? 'Обновить' : 'Добавить'
+                  )}
                 </button>
               </div>
             </div>
