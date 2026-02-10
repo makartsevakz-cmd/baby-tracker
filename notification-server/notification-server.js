@@ -161,7 +161,7 @@ async function checkIntervalNotification(notification, now) {
       .from('activities')
       .select('*')
       .eq('baby_id', baby.id)
-      .eq('type', notification.activity_type)
+      .eq('activity_type', notification.activity_type)
       .order('start_time', { ascending: false })
       .limit(1)
       .maybeSingle();

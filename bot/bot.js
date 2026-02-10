@@ -1,4 +1,4 @@
-// bot.js - ФИНАЛЬНАЯ версия с атомарной блокировкой
+// bot.js - ИСПРАВЛЕННАЯ версия с поддержкой интервальных уведомлений
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
@@ -22,33 +22,22 @@ console.log('📊 Supabase:', supabase ? '✅ Подключен' : '❌ Не н
 // АТОМАРНАЯ ЗАЩИТА ОТ ДУБЛЕЙ
 // ============================================
 
-// Глобальная блокировка на уровне процесса
 const processingLocks = new Set();
 
-/**
- * Генерирует уникальный ключ для блокировки
- */
 function generateLockKey(notificationId, scheduledMinute) {
   return `${notificationId}_${scheduledMinute}`;
 }
 
-/**
- * АТОМАРНАЯ попытка заблокировать отправку уведомления
- * Использует INSERT с уникальным индексом в БД
- */
 async function tryAcquireLock(notificationId, scheduledMinute) {
   const lockKey = generateLockKey(notificationId, scheduledMinute);
   
-  // 1. Проверка in-memory блокировки (мгновенно)
   if (processingLocks.has(lockKey)) {
     console.log(`🔒 Process lock exists: ${lockKey}`);
     return false;
   }
   
-  // 2. Устанавливаем локальную блокировку
   processingLocks.add(lockKey);
   
-  // 3. Пытаемся вставить запись в БД (атомарная операция)
   try {
     const { data, error } = await supabase
       .from('sent_notifications')
@@ -61,7 +50,6 @@ async function tryAcquireLock(notificationId, scheduledMinute) {
       .single();
     
     if (error) {
-      // Ошибка уникальности = уже отправлено другим процессом
       if (error.code === '23505') {
         console.log(`⚠️ Database lock exists (unique constraint): ${lockKey}`);
         processingLocks.delete(lockKey);
@@ -80,27 +68,17 @@ async function tryAcquireLock(notificationId, scheduledMinute) {
   }
 }
 
-/**
- * Освобождает блокировку
- */
 function releaseLock(notificationId, scheduledMinute) {
   const lockKey = generateLockKey(notificationId, scheduledMinute);
   processingLocks.delete(lockKey);
   
-  // Автоочистка из кеша через 2 минуты
   setTimeout(() => {
     processingLocks.delete(lockKey);
   }, 120000);
 }
 
-/**
- * Отправляет уведомление с атомарной защитой
- */
-async function sendNotificationSafe(chatId, notification, scheduledMinute) {
-  const lockKey = generateLockKey(notification.id, scheduledMinute);
-  
+async function sendNotificationSafe(chatId, notification, scheduledMinute, customMessage = null) {
   try {
-    // Пытаемся получить блокировку
     const acquired = await tryAcquireLock(notification.id, scheduledMinute);
     
     if (!acquired) {
@@ -108,13 +86,12 @@ async function sendNotificationSafe(chatId, notification, scheduledMinute) {
       return false;
     }
     
-    // Отправляем сообщение
     const activityLabel = getActivityLabel(notification.activity_type);
-    const message = `
+    const message = customMessage || `
 🔔 Напоминание: ${notification.title || 'Уведомление'}
 
 ${activityLabel}
-${notification.comment ? `\n💬 ${notification.comment}` : ''}
+${notification.message ? `\n💬 ${notification.message}` : ''}
     `.trim();
     
     await bot.sendMessage(chatId, message, {
@@ -132,7 +109,6 @@ ${notification.comment ? `\n💬 ${notification.comment}` : ''}
     
     console.log(`✅ Уведомление ${notification.id} отправлено пользователю ${chatId}`);
     
-    // Освобождаем блокировку
     releaseLock(notification.id, scheduledMinute);
     
     return true;
@@ -144,9 +120,6 @@ ${notification.comment ? `\n💬 ${notification.comment}` : ''}
   }
 }
 
-/**
- * Получает название активности по типу
- */
 function getActivityLabel(activityType) {
   const labels = {
     breastfeeding: '🍼 Кормление грудью',
@@ -160,14 +133,84 @@ function getActivityLabel(activityType) {
   return labels[activityType] || activityType;
 }
 
-/**
- * Проверяет и отправляет уведомления
- */
+function formatInterval(minutes) {
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  
+  if (hours > 0) {
+    return mins > 0 ? `${hours}ч ${mins}м` : `${hours}ч`;
+  }
+  return `${mins}м`;
+}
+
+// ============================================
+// ПРОВЕРКА ИНТЕРВАЛЬНЫХ УВЕДОМЛЕНИЙ
+// ============================================
+
+async function checkIntervalNotification(notification, now, userId) {
+  try {
+    // Получить baby_id для этого пользователя
+    const { data: baby, error: babyError } = await supabase
+      .from('babies')
+      .select('id')
+      .eq('user_id', userId)
+      .maybeSingle();
+    
+    if (babyError || !baby) {
+      console.log(`❌ Не найден малыш для пользователя ${userId}`);
+      return { shouldSend: false };
+    }
+    
+    // ИСПРАВЛЕНО: используем activity_type вместо type
+    const { data: lastActivity, error: activityError } = await supabase
+      .from('activities')
+      .select('*')
+      .eq('baby_id', baby.id)
+      .eq('activity_type', notification.activity_type)
+      .order('start_time', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    
+    if (activityError) {
+      console.error('Error fetching last activity:', activityError);
+      return { shouldSend: false };
+    }
+    
+    if (!lastActivity) {
+      console.log(`ℹ️ Нет активностей типа ${notification.activity_type} для проверки интервала`);
+      return { shouldSend: false };
+    }
+
+    const intervalMinutes = Number(notification.interval_minutes);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+      console.log(`⚠️ Некорректный интервал: ${notification.interval_minutes}`);
+      return { shouldSend: false };
+    }
+
+    const lastTime = new Date(lastActivity.end_time || lastActivity.start_time);
+    const diffMinutes = (now - lastTime) / (1000 * 60);
+
+    console.log(`📊 Интервал для ${notification.activity_type}: прошло ${diffMinutes.toFixed(1)} мин из ${intervalMinutes} мин`);
+
+    // Отправляем когда интервал пройден
+    const shouldSend = diffMinutes >= intervalMinutes;
+    const intervalWindow = shouldSend ? Math.floor(diffMinutes / intervalMinutes) : null;
+
+    return { shouldSend, intervalWindow, diffMinutes: diffMinutes.toFixed(1) };
+  } catch (error) {
+    console.error('Error checking interval notification:', error);
+    return { shouldSend: false };
+  }
+}
+
+// ============================================
+// ОСНОВНАЯ ПРОВЕРКА УВЕДОМЛЕНИЙ
+// ============================================
+
 let lastCheckedMinute = null;
-let isChecking = false; // Флаг выполнения проверки
+let isChecking = false;
 
 async function checkAndSendNotifications() {
-  // Защита от параллельного выполнения
   if (isChecking) {
     console.log('⏳ Предыдущая проверка ещё выполняется, пропускаем');
     return;
@@ -184,7 +227,6 @@ async function checkAndSendNotifications() {
     const now = new Date();
     const currentMinute = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
     
-    // Проверка: уже проверяли эту минуту?
     if (lastCheckedMinute === currentMinute) {
       return;
     }
@@ -196,12 +238,11 @@ async function checkAndSendNotifications() {
     
     console.log(`🔍 Проверка уведомлений: ${currentTime}, день ${currentDay}`);
     
-    // Получаем активные уведомления
+    // ИСПРАВЛЕНО: загружаем ВСЕ типы уведомлений включая 'interval'
     const { data: notifications, error } = await supabase
       .from('notifications')
       .select('*')
-      .eq('enabled', true)
-      .in('notification_type', ['time', 'time_based']);
+      .eq('enabled', true);
     
     if (error) {
       console.error('Error fetching notifications:', error);
@@ -209,25 +250,22 @@ async function checkAndSendNotifications() {
     }
     
     if (!notifications || notifications.length === 0) {
+      console.log('ℹ️ Нет активных уведомлений');
       return;
     }
     
-    console.log(`📬 Найдено ${notifications.length} уведомлений`);
+    console.log(`📬 Найдено ${notifications.length} активных уведомлений`);
+    
+    // Группируем по типу для статистики
+    const byType = notifications.reduce((acc, n) => {
+      acc[n.notification_type] = (acc[n.notification_type] || 0) + 1;
+      return acc;
+    }, {});
+    console.log(`📊 Типы уведомлений:`, byType);
     
     // Обрабатываем уведомления ПОСЛЕДОВАТЕЛЬНО
     for (const notification of notifications) {
       try {
-        const notificationTime = notification.notification_time?.slice(0, 5);
-        const repeatDays = notification.repeat_days || [];
-        
-        // Проверяем время и день
-        if (notificationTime !== currentTime || !repeatDays.includes(currentDay)) {
-          continue;
-        }
-        
-        console.log(`⏰ Нужно отправить: ${notification.title} (ID: ${notification.id})`);
-        
-        // Получаем chat_id пользователя
         const userId = notification.user_id;
         const chatId = await resolveChatId(userId);
         
@@ -236,8 +274,38 @@ async function checkAndSendNotifications() {
           continue;
         }
         
-        // Отправляем с атомарной защитой
-        await sendNotificationSafe(chatId, notification, currentMinute);
+        // ========== TIME-BASED УВЕДОМЛЕНИЯ ==========
+        if (notification.notification_type === 'time') {
+          const notificationTime = notification.notification_time?.slice(0, 5);
+          const repeatDays = notification.repeat_days || [];
+          
+          if (notificationTime === currentTime && repeatDays.includes(currentDay)) {
+            console.log(`⏰ TIME: Отправка уведомления "${notification.title}" (ID: ${notification.id})`);
+            
+            await sendNotificationSafe(chatId, notification, currentMinute);
+          }
+        }
+        
+        // ========== INTERVAL-BASED УВЕДОМЛЕНИЯ ==========
+        if (notification.notification_type === 'interval') {
+          const result = await checkIntervalNotification(notification, now, userId);
+          
+          if (result.shouldSend) {
+            console.log(`⏱️ INTERVAL: Отправка уведомления "${notification.title}" (ID: ${notification.id})`);
+            console.log(`   Прошло ${result.diffMinutes} мин из ${notification.interval_minutes} мин`);
+            
+            const intervalKey = `${currentMinute}-window-${result.intervalWindow}`;
+            const customMessage = `
+🔔 Напоминание: ${notification.title || 'Уведомление'}
+
+⏱️ Прошло ${formatInterval(notification.interval_minutes)} с последней активности
+${getActivityLabel(notification.activity_type)}
+${notification.message ? `\n💬 ${notification.message}` : ''}
+            `.trim();
+            
+            await sendNotificationSafe(chatId, notification, intervalKey, customMessage);
+          }
+        }
         
       } catch (notifError) {
         console.error(`Error processing notification ${notification.id}:`, notifError);
@@ -251,14 +319,6 @@ async function checkAndSendNotifications() {
   }
 }
 
-/**
- * Возвращает chat_id для пользователя Supabase Auth.
- *
- * Поддерживает несколько сценариев:
- * 1) Текущий: user_telegram_mapping.user_id = auth user id (uuid)
- * 2) Legacy: user_telegram_mapping.user_id = telegram user id (number)
- * 3) Fallback: chat_id совпадает с telegram_id
- */
 async function resolveChatId(userId) {
   if (!supabase) return null;
 
@@ -318,7 +378,6 @@ bot.onText(/\/start/, async (msg) => {
   const firstName = msg.from.first_name || 'друг';
   const telegramUserId = msg.from.id;
 
-  // Сохраняем в user_telegram_mapping
   if (supabase) {
     try {
       await supabase
@@ -349,7 +408,7 @@ bot.onText(/\/start/, async (msg) => {
 • Вести учет смены подгузников
 • Записывать прием лекарств и купания
 • Следить за ростом и весом малыша
-• Получать напоминания и уведомления (без дублей!)
+• Получать напоминания (время + интервалы!)
 • Просматривать статистику и историю
 
 Нажмите кнопку ниже, чтобы открыть приложение! 👇
@@ -412,7 +471,8 @@ bot.onText(/\/help/, (msg) => {
 Просматривайте тепловую карту активностей
 
 🔔 **Уведомления**
-Настраивайте напоминания (гарантированно без дублей!)
+• По времени (например, каждый день в 12:00)
+• По интервалу (например, каждые 3 часа после кормления)
 
 **Команды:**
 /start - Открыть приложение
@@ -458,7 +518,7 @@ bot.on('callback_query', (query) => {
 Современное приложение для родителей с:
 • Отслеживанием активностей
 • Статистикой и графиками
-• Умными напоминаниями (без дублей!)
+• Умными напоминаниями (время + интервалы!)
 • Облачным хранением данных
 
 Сделано с ❤️
@@ -501,7 +561,7 @@ const server = http.createServer((req, res) => {
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
       bot: 'Baby Tracker Bot',
-      message: 'Bot with atomic lock protection',
+      message: 'Bot with interval notifications support',
       active_locks: processingLocks.size
     }));
   } else {
