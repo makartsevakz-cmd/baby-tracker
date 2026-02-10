@@ -1,14 +1,29 @@
 // notification-server.js
-// Серверный код для отправки уведомлений через Telegram Bot
+// Серверный код для отправки уведомлений через Telegram Bot и Android FCM
 // Развертывание: Vercel, Railway, Heroku, или ваш VPS
 
 require('dotenv').config();
+const admin = require('firebase-admin');
 const express = require('express');
 const cron = require('node-cron');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
 app.use(express.json());
+
+// Инициализация Firebase Admin SDK
+let firebaseInitialized = false;
+try {
+  const serviceAccount = require('./firebase-admin-key.json');
+  admin.initializeApp({
+    credential: admin.credential.cert(serviceAccount)
+  });
+  firebaseInitialized = true;
+  console.log('✅ Firebase Admin SDK initialized');
+} catch (error) {
+  console.warn('⚠️ Firebase Admin SDK not initialized:', error.message);
+  console.warn('Android push notifications will not work');
+}
 
 // Инициализация Supabase с service key (не anon key!)
 const supabase = createClient(
@@ -66,11 +81,6 @@ async function checkAndSendNotifications() {
           }
         }
         
-        if (!telegramId) {
-          console.log(`No Telegram ID for user ${notification.user_id}`);
-          continue;
-        }
-        
         let shouldSend = false;
         let notificationMessage = '';
         let intervalWindow = null;
@@ -105,15 +115,15 @@ async function checkAndSendNotifications() {
             : `${notification.id}-time-${now.toISOString().slice(0, 16)}`;
 
           if (!sentNotifications.has(notificationKey)) {
-            await sendTelegramMessage(telegramId, notificationMessage, notification.title);
+            await sendNotification(notification.user_id, notification.title, notificationMessage);
             sentNotifications.set(notificationKey, true);
 
             // Очистить старые записи (старше 2 часов)
             cleanupSentNotifications();
 
-            console.log(`Notification sent to user ${telegramId}`);
+            console.log(`✅ Notification sent for user ${notification.user_id}`);
           } else {
-            console.log(`Notification already sent: ${notificationKey}`);
+            console.log(`⏭️  Notification already sent: ${notificationKey}`);
           }
         }
       } catch (error) {
@@ -150,7 +160,7 @@ async function checkIntervalNotification(notification, now) {
       .from('babies')
       .select('id')
       .eq('user_id', notification.user_id)
-      .single();
+      .maybeSingle();
     
     if (!baby) {
       return { shouldSend: false };
@@ -161,9 +171,6 @@ async function checkIntervalNotification(notification, now) {
       .from('activities')
       .select('*')
       .eq('baby_id', baby.id)
-      // В таблице activities тип активности хранится в колонке `type`.
-      // Из-за фильтра по несуществующей `activity_type` lastActivity всегда был null,
-      // и interval-уведомления никогда не отправлялись.
       .eq('type', notification.activity_type)
       .order('start_time', { ascending: false })
       .limit(1)
@@ -192,7 +199,102 @@ async function checkIntervalNotification(notification, now) {
   }
 }
 
-async function sendTelegramMessage(chatId, message, title = null) {
+async function sendNotification(userId, title, message) {
+  try {
+    // 🔥 ИСПРАВЛЕНО: Получаем данные пользователя через auth.admin
+    const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(userId);
+    
+    if (authError || !authUser) {
+      console.error('User not found:', userId, authError);
+      return { success: false, error: 'User not found' };
+    }
+
+    // Получаем device tokens из таблицы
+    const { data: deviceTokens } = await supabase
+      .from('device_tokens')
+      .select('*')
+      .eq('user_id', userId);
+    
+    const results = { telegram: null, android: null };
+    
+    // Отправляем в Telegram если есть telegram_id в метаданных
+    const telegramId = authUser.user_metadata?.telegram_id;
+    if (telegramId) {
+      try {
+        const telegramResult = await sendTelegramMessage(telegramId, title, message);
+        results.telegram = telegramResult;
+        console.log(`📱 Telegram notification sent to ${telegramId}`);
+      } catch (error) {
+        console.error('Telegram send error:', error);
+        results.telegram = { success: false, error: error.message };
+      }
+    }
+    
+    // Отправляем в Android если есть токены и Firebase настроен
+    if (firebaseInitialized && deviceTokens && deviceTokens.length > 0) {
+      try {
+        const tokens = deviceTokens
+          .filter(t => t.platform === 'android')
+          .map(t => t.token);
+        
+        if (tokens.length > 0) {
+          const androidResult = await admin.messaging().sendMulticast({
+            tokens,
+            notification: {
+              title: title || 'Baby Tracker',
+              body: message
+            },
+            android: {
+              priority: 'high',
+              notification: {
+                sound: 'default'
+              }
+            }
+          });
+          
+          results.android = {
+            success: androidResult.successCount > 0,
+            successCount: androidResult.successCount,
+            failureCount: androidResult.failureCount
+          };
+          
+          console.log(`📱 Android notifications sent: ${androidResult.successCount}/${tokens.length}`);
+          
+          // Удаляем невалидные токены
+          if (androidResult.failureCount > 0) {
+            const failedTokens = [];
+            androidResult.responses.forEach((resp, idx) => {
+              if (!resp.success) {
+                failedTokens.push(tokens[idx]);
+              }
+            });
+            
+            if (failedTokens.length > 0) {
+              await supabase
+                .from('device_tokens')
+                .delete()
+                .in('token', failedTokens);
+              console.log(`🗑️  Removed ${failedTokens.length} invalid tokens`);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Android send error:', error);
+        results.android = { success: false, error: error.message };
+      }
+    }
+    
+    return {
+      success: results.telegram?.success || results.android?.success || false,
+      results
+    };
+  } catch (error) {
+    console.error('Send notification error:', error);
+    return { success: false, error: error.message };
+  }
+}
+
+async function sendTelegramMessage(chatId, title, message) {
   try {
     const fullMessage = title ? `<b>${title}</b>\n\n${message}` : message;
     
@@ -218,7 +320,7 @@ async function sendTelegramMessage(chatId, message, title = null) {
       throw new Error(`Telegram API error: ${data.description}`);
     }
     
-    return data;
+    return { success: true, data };
   } catch (error) {
     console.error('Failed to send Telegram message:', error);
     throw error;
@@ -254,8 +356,6 @@ function cleanupSentNotifications() {
   const twoHoursAgo = Date.now() - (2 * 60 * 60 * 1000);
   
   for (const [key] of sentNotifications) {
-    // Ключ формат: "notificationId-2026-01-31T07:30"
-    // Берём всё после первого "-" как timestamp
     const dashIndex = key.indexOf('-');
     if (dashIndex === -1) continue;
     
@@ -273,12 +373,12 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    activeNotifications: sentNotifications.size
+    activeNotifications: sentNotifications.size,
+    firebaseInitialized
   });
 });
 
 // Cron endpoint для Vercel Cron Jobs
-// Настройте в Vercel Dashboard: Settings → Cron Jobs → добавьте "0 * * * * *" (каждую минуту) на путь /api/cron
 app.get('/api/cron', async (req, res) => {
   try {
     await checkAndSendNotifications();
@@ -300,8 +400,9 @@ app.post('/trigger', async (req, res) => {
 
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, () => {
-  console.log(`Notification service running on port ${PORT}`);
-  console.log('Cron job scheduled to run every minute');
+  console.log(`🚀 Notification service running on port ${PORT}`);
+  console.log('📅 Cron job scheduled to run every minute');
+  console.log(`🔥 Firebase: ${firebaseInitialized ? 'ENABLED' : 'DISABLED'}`);
 });
 
 // Graceful shutdown

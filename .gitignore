@@ -1,2 +1,8 @@
 node_modules/
 dist/
+.env.local
+.env
+android/key.properties
+android/google-services.json
+notification-server/firebase-admin-key.json
+my-release-key.keystore

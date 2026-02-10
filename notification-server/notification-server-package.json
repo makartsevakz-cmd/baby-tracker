@@ -1,7 +1,7 @@
 {
   "name": "baby-tracker-notifications",
   "version": "1.0.0",
-  "description": "Notification service for Baby Tracker Telegram Bot",
+  "description": "Notification service for Baby Tracker",
   "main": "notification-server.js",
   "scripts": {
     "start": "node notification-server.js",
@@ -11,6 +11,7 @@
     "@supabase/supabase-js": "^2.93.3",
     "dotenv": "^16.0.3",
     "express": "^4.18.2",
+    "firebase-admin": "^12.0.0",
     "node-cron": "^3.0.2"
   },
   "devDependencies": {

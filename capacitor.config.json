@@ -1,0 +1,17 @@
+{
+  "appId": "ru.yourname.babydiary",
+  "appName": "Дневник малыша",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "PushNotifications": {
+      "presentationOptions": ["badge", "sound", "alert"]
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_icon_config_sample",
+      "iconColor": "#9333EA"
+    }
+  }
+}
