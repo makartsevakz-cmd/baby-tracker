@@ -125,11 +125,14 @@ const NotificationsView = ({
       } else {
         // Fallback to localStorage
         if (editingId) {
-          setNotifications(prev => prev.map(n => n.id === editingId ? notificationData : n));
+          const updatedNotifications = notifications.map(n => n.id === editingId ? notificationData : n);
+          setNotifications(updatedNotifications);
+          localStorage.setItem('notifications', JSON.stringify(updatedNotifications));
         } else {
-          setNotifications(prev => [notificationData, ...prev]);
+          const updatedNotifications = [notificationData, ...notifications];
+          setNotifications(updatedNotifications);
+          localStorage.setItem('notifications', JSON.stringify(updatedNotifications));
         }
-        localStorage.setItem('notifications', JSON.stringify(notifications));
       }
     } catch (error) {
       console.error('Save notification error:', error);

@@ -141,13 +141,22 @@ export const shouldSendIntervalNotification = (notification, lastActivity, now =
     return false;
   }
 
-  if (!lastActivity || !notification.interval_minutes) {
+  const intervalMinutes = Number(notification.interval_minutes);
+  if (!lastActivity || !Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
     return false;
   }
 
-  const lastTime = new Date(lastActivity.endTime || lastActivity.startTime);
+  const lastTimeValue =
+    lastActivity.end_time ||
+    lastActivity.endTime ||
+    lastActivity.start_time ||
+    lastActivity.startTime;
+
+  if (!lastTimeValue) return false;
+
+  const lastTime = new Date(lastTimeValue);
   const diffMinutes = (now - lastTime) / (1000 * 60);
-  
-  // Send notification if interval has passed (with 1 minute tolerance)
-  return diffMinutes >= notification.interval_minutes - 1;
+
+  // Send notification if interval has passed
+  return diffMinutes >= intervalMinutes;
 };

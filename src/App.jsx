@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
@@ -258,6 +258,17 @@ const ActivityTracker = () => {
     if (savedGrowth) setGrowthData(JSON.parse(savedGrowth));
   };
 
+  const getActivityChronologyTime = useCallback((activity) => {
+    if (!activity) return 0;
+    const preferredTime = activity.startTime || activity.endTime;
+    const parsed = new Date(preferredTime).getTime();
+    return Number.isFinite(parsed) ? parsed : 0;
+  }, []);
+
+  const activitiesByChronology = useMemo(() => {
+    return [...activities].sort((a, b) => getActivityChronologyTime(b) - getActivityChronologyTime(a));
+  }, [activities, getActivityChronologyTime]);
+
   const handleBack = useCallback(() => {
     if (view !== 'main') {
       if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -398,7 +409,9 @@ const ActivityTracker = () => {
       } else if (formData.endTime) {
         activityData.endTime = formData.endTime;
       } else {
-        activityData.endTime = new Date().toISOString();
+        // For manual historical records without end time,
+        // keep chronology based on the selected start time.
+        activityData.endTime = activityData.startTime;
       }
     } else if (formData.type === 'burp') {
       activityData.endTime = null;
@@ -426,11 +439,14 @@ const ActivityTracker = () => {
       } else {
         // Fallback to local storage
         if (editingId) {
-          setActivities(prev => prev.map(a => a.id === editingId ? activityData : a));
+          const updatedActivities = activities.map(a => a.id === editingId ? activityData : a);
+          setActivities(updatedActivities);
+          localStorage.setItem('baby_activities', JSON.stringify(updatedActivities));
         } else {
-          setActivities(prev => [activityData, ...prev]);
+          const updatedActivities = [activityData, ...activities];
+          setActivities(updatedActivities);
+          localStorage.setItem('baby_activities', JSON.stringify(updatedActivities));
         }
-        localStorage.setItem('baby_activities', JSON.stringify(activities));
       }
     } catch (error) {
       console.error('Save activity error:', error);
@@ -764,18 +780,11 @@ const ActivityTracker = () => {
 
   // Get time since last activity of this type with improved formatting
   const getTimeSinceLastActivity = (type) => {
-    const typeActivities = activities.filter(a => a.type === type);
+    const typeActivities = activitiesByChronology.filter(a => a.type === type);
     if (typeActivities.length === 0) return null;
-    
-    // Find most recent activity
-    const sortedActivities = typeActivities.sort((a, b) => {
-      const timeA = a.endTime || a.startTime;
-      const timeB = b.endTime || b.startTime;
-      return new Date(timeB) - new Date(timeA);
-    });
-    
-    const lastActivity = sortedActivities[0];
-    const lastTime = lastActivity.endTime || lastActivity.startTime;
+
+    const lastActivity = typeActivities[0];
+    const lastTime = lastActivity.startTime || lastActivity.endTime;
     if (!lastTime) return null;
     
     const now = Date.now();
@@ -885,11 +894,14 @@ const ActivityTracker = () => {
         }
       } else {
         if (editingGrowthId) {
-          setGrowthData(prev => prev.map(r => r.id === editingGrowthId ? record : r));
+          const updatedGrowthData = growthData.map(r => r.id === editingGrowthId ? record : r);
+          setGrowthData(updatedGrowthData);
+          localStorage.setItem('growth_data', JSON.stringify(updatedGrowthData));
         } else {
-          setGrowthData(prev => [...prev, record].sort((a, b) => new Date(a.date) - new Date(b.date)));
+          const updatedGrowthData = [...growthData, record].sort((a, b) => new Date(a.date) - new Date(b.date));
+          setGrowthData(updatedGrowthData);
+          localStorage.setItem('growth_data', JSON.stringify(updatedGrowthData));
         }
-        localStorage.setItem('growth_data', JSON.stringify(growthData));
       }
       
       setEditingGrowthId(null);
@@ -2060,7 +2072,7 @@ const ActivityTracker = () => {
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Последние записи ({activities.length})</h2>
           <div className="space-y-3">
-            {activities.slice(0, 10).map(activity => {
+            {activitiesByChronology.slice(0, 10).map(activity => {
               const ActivityIcon = activityTypes[activity.type].icon;
               const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
               
