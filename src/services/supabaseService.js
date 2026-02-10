@@ -1,6 +1,6 @@
 // src/services/supabaseService.js
 import * as supabaseModule from '../utils/supabase.js';
-import cacheService from './cacheService.js';
+import cacheService, { CACHE_TTL_SECONDS } from './cacheService.js';
 
 /**
  * Обёртка для Supabase с кешированием
@@ -10,7 +10,7 @@ class SupabaseService {
   /**
    * Получить данные с кешированием
    */
-  async getWithCache(table, options = {}, ttl = 3600) {
+  async getWithCache(table, options = {}, ttl = CACHE_TTL_SECONDS) {
     const cacheKey = this._generateCacheKey(table, options);
 
     // Пытаемся получить из кеша

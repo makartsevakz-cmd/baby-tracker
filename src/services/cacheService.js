@@ -1,6 +1,8 @@
 // src/services/cacheService.js
 import { Platform } from '../utils/platform';
 
+export const CACHE_TTL_SECONDS = 60 * 60; // 1 hour
+
 /**
  * Универсальный сервис кеширования для Telegram и Android
  */
@@ -10,20 +12,20 @@ class CacheService {
     this.prefix = 'cache_';
     this.metaPrefix = 'cache_meta_';
     this.isReady = false;
+    this.memoryStore = new Map();
     this.initPromise = this._init();
   }
 
   async _init() {
-    // Для Android импортируем Preferences динамически
     if (this.platform === 'android') {
-      try {
-        const { Preferences } = await import('@capacitor/preferences');
-        this.Preferences = Preferences;
-      } catch (error) {
-        console.warn('Capacitor Preferences not available, falling back to localStorage');
-        this.platform = 'web';
+      const preferencesPlugin = globalThis?.window?.Capacitor?.Plugins?.Preferences;
+      if (preferencesPlugin) {
+        this.Preferences = preferencesPlugin;
+      } else {
+        console.warn('Capacitor Preferences not available, fallback to in-memory cache');
       }
     }
+
     this.isReady = true;
   }
 
@@ -38,7 +40,7 @@ class CacheService {
    */
   async get(key) {
     await this._ensureReady();
-    
+
     try {
       const fullKey = this.prefix + key;
       const metaKey = this.metaPrefix + key;
@@ -52,7 +54,6 @@ class CacheService {
         return null;
       }
 
-      // Проверяем срок действия
       if (metaStr) {
         const meta = JSON.parse(metaStr);
         const now = Date.now();
@@ -73,9 +74,9 @@ class CacheService {
   /**
    * Сохранить данные в кеш
    */
-  async set(key, data, ttl = 3600) {
+  async set(key, data, ttl = CACHE_TTL_SECONDS) {
     await this._ensureReady();
-    
+
     try {
       const fullKey = this.prefix + key;
       const metaKey = this.metaPrefix + key;
@@ -104,7 +105,7 @@ class CacheService {
    */
   async remove(key) {
     await this._ensureReady();
-    
+
     try {
       const fullKey = this.prefix + key;
       const metaKey = this.metaPrefix + key;
@@ -126,11 +127,11 @@ class CacheService {
    */
   async clear() {
     await this._ensureReady();
-    
+
     try {
       const keys = await this._getAllKeys();
-      
-      const cacheKeys = keys.filter(k => 
+
+      const cacheKeys = keys.filter(k =>
         k.startsWith(this.prefix) || k.startsWith(this.metaPrefix)
       );
 
@@ -151,10 +152,10 @@ class CacheService {
    */
   async getStats() {
     await this._ensureReady();
-    
+
     try {
       const keys = await this._getAllKeys();
-      const cacheKeys = keys.filter(k => 
+      const cacheKeys = keys.filter(k =>
         k.startsWith(this.prefix) && !k.startsWith(this.metaPrefix)
       );
 
@@ -198,10 +199,10 @@ class CacheService {
    */
   async cleanExpired() {
     await this._ensureReady();
-    
+
     try {
       const keys = await this._getAllKeys();
-      const cacheKeys = keys.filter(k => 
+      const cacheKeys = keys.filter(k =>
         k.startsWith(this.prefix) && !k.startsWith(this.metaPrefix)
       );
 
@@ -230,44 +231,40 @@ class CacheService {
     }
   }
 
-  // ============================================
-  // Внутренние методы (платформо-специфичные)
-  // ============================================
-
   async _getItem(key) {
-    if (this.platform === 'telegram' || this.platform === 'web') {
-      return localStorage.getItem(key);
-    } else if (this.platform === 'android' && this.Preferences) {
+    if (this.platform === 'android' && this.Preferences) {
       const { value } = await this.Preferences.get({ key });
       return value;
     }
-    return null;
+
+    return this.memoryStore.has(key) ? this.memoryStore.get(key) : null;
   }
 
   async _setItem(key, value) {
-    if (this.platform === 'telegram' || this.platform === 'web') {
-      localStorage.setItem(key, value);
-    } else if (this.platform === 'android' && this.Preferences) {
+    if (this.platform === 'android' && this.Preferences) {
       await this.Preferences.set({ key, value });
+      return;
     }
+
+    this.memoryStore.set(key, value);
   }
 
   async _removeItem(key) {
-    if (this.platform === 'telegram' || this.platform === 'web') {
-      localStorage.removeItem(key);
-    } else if (this.platform === 'android' && this.Preferences) {
+    if (this.platform === 'android' && this.Preferences) {
       await this.Preferences.remove({ key });
+      return;
     }
+
+    this.memoryStore.delete(key);
   }
 
   async _getAllKeys() {
-    if (this.platform === 'telegram' || this.platform === 'web') {
-      return Object.keys(localStorage);
-    } else if (this.platform === 'android' && this.Preferences) {
+    if (this.platform === 'android' && this.Preferences) {
       const { keys } = await this.Preferences.keys();
       return keys;
     }
-    return [];
+
+    return Array.from(this.memoryStore.keys());
   }
 }
 
