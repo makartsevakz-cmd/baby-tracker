@@ -31,8 +31,10 @@ class NotificationService {
   async initializeAndroidNotifications() {
     try {
       // Динамический импорт Capacitor плагинов
-      const { PushNotifications } = await import('@capacitor/push-notifications');
-      const { LocalNotifications } = await import('@capacitor/local-notifications');
+      const pushNotificationsModuleName = '@capacitor/push-notifications';
+      const localNotificationsModuleName = '@capacitor/local-notifications';
+      const { PushNotifications } = await import(/* @vite-ignore */ pushNotificationsModuleName);
+      const { LocalNotifications } = await import(/* @vite-ignore */ localNotificationsModuleName);
 
       // Запрашиваем разрешения
       const permResult = await PushNotifications.requestPermissions();
@@ -120,7 +122,8 @@ class NotificationService {
 
   async requestPermissions() {
     if (this.platform === 'android') {
-      const { PushNotifications } = await import('@capacitor/push-notifications');
+      const pushNotificationsModuleName = '@capacitor/push-notifications';
+      const { PushNotifications } = await import(/* @vite-ignore */ pushNotificationsModuleName);
       return await PushNotifications.requestPermissions();
     }
     return { receive: 'granted' };

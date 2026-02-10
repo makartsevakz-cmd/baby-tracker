@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
+import notificationService from './services/notificationService.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 
 const ActivityTracker = () => {
@@ -239,11 +240,11 @@ const ActivityTracker = () => {
         supabaseModule.authHelpers &&
         typeof supabaseModule.authHelpers.signInWithTelegram === 'function';
 
-      if (hasSupabase && window.Telegram?.WebApp?.initDataUnsafe?.user) {
-        const telegramUser = window.Telegram.WebApp.initDataUnsafe.user;
+      if (hasSupabase) {
+        const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
 
         try {
-          const { error } = await supabaseModule.authHelpers.signInWithTelegram(telegramUser);
+          const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({ telegramUser });
 
           if (error) {
             console.error('Auth error:', error);
@@ -254,7 +255,11 @@ const ActivityTracker = () => {
             return;
           }
 
-          setIsAuthenticated(true);
+          setIsAuthenticated(Boolean(user));
+
+          if (mode === 'anonymous') {
+            console.log('Signed in with anonymous Supabase session');
+          }
 
           try {
             const initialData = supabaseModule.appDataHelpers
@@ -293,6 +298,8 @@ const ActivityTracker = () => {
           if (savedTimers) setTimers(savedTimers);
           if (savedPaused) setPausedTimers(savedPaused);
           if (savedTimerMeta) setTimerMeta(savedTimerMeta);
+
+          await notificationService.initialize();
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
           setAuthError('Supabase недоступен - используется кеш');
