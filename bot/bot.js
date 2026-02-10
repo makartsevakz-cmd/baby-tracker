@@ -22,6 +22,26 @@ console.log('📊 Supabase:', supabase ? '✅ Подключен' : '❌ Не н
 // Функции для работы с уведомлениями
 // ============================================
 
+// In-memory кеш для быстрой проверки отправленных уведомлений
+const sentNotificationsCache = new Map();
+
+/**
+ * Генерирует уникальный ключ для scheduledTime (до минут)
+ */
+function generateScheduledTimeKey(currentDate) {
+  // Округляем до минут (убираем секунды и миллисекунды)
+  const rounded = new Date(currentDate);
+  rounded.setSeconds(0, 0);
+  return rounded.toISOString();
+}
+
+/**
+ * Генерирует ключ для кеша
+ */
+function generateCacheKey(userId, notificationId, scheduledTime) {
+  return `${userId}_${notificationId}_${scheduledTime}`;
+}
+
 /**
  * Проверяет, было ли уже отправлено уведомление
  */
@@ -29,6 +49,15 @@ async function wasNotificationSent(userId, notificationId, scheduledTime) {
   if (!supabase) return false;
   
   try {
+    const cacheKey = generateCacheKey(userId, notificationId, scheduledTime);
+    
+    // Проверяем кеш (мгновенно)
+    if (sentNotificationsCache.has(cacheKey)) {
+      console.log(`⚡ Cache hit: уведомление уже отправлено (${cacheKey})`);
+      return true;
+    }
+    
+    // Проверяем базу данных
     const { data, error } = await supabase
       .from('sent_notifications')
       .select('id')
@@ -38,7 +67,17 @@ async function wasNotificationSent(userId, notificationId, scheduledTime) {
       .limit(1);
     
     if (error) throw error;
-    return data && data.length > 0;
+    
+    const alreadySent = data && data.length > 0;
+    
+    // Добавляем в кеш если найдено
+    if (alreadySent) {
+      sentNotificationsCache.set(cacheKey, true);
+      // Очищаем кеш через 2 минуты
+      setTimeout(() => sentNotificationsCache.delete(cacheKey), 120000);
+    }
+    
+    return alreadySent;
   } catch (error) {
     console.error('Error checking sent notification:', error);
     return false; // В случае ошибки разрешаем отправку
@@ -52,6 +91,12 @@ async function markNotificationAsSent(userId, notificationId, scheduledTime, not
   if (!supabase) return;
   
   try {
+    const cacheKey = generateCacheKey(userId, notificationId, scheduledTime);
+    
+    // Добавляем в кеш НЕМЕДЛЕННО (защита от race condition)
+    sentNotificationsCache.set(cacheKey, true);
+    setTimeout(() => sentNotificationsCache.delete(cacheKey), 120000);
+    
     const { error } = await supabase
       .from('sent_notifications')
       .insert({
@@ -65,7 +110,11 @@ async function markNotificationAsSent(userId, notificationId, scheduledTime, not
       // Игнорируем ошибки уникальности (уведомление уже отмечено)
       if (error.code !== '23505') {
         throw error;
+      } else {
+        console.log(`ℹ️ Уведомление уже помечено как отправленное в БД`);
       }
+    } else {
+      console.log(`✅ Помечено как отправленное: user=${userId}, notif=${notificationId}`);
     }
   } catch (error) {
     console.error('Error marking notification as sent:', error);
@@ -77,15 +126,16 @@ async function markNotificationAsSent(userId, notificationId, scheduledTime, not
  */
 async function sendNotificationToUser(chatId, userId, notification) {
   try {
-    // Генерируем уникальное scheduledTime для этого момента
-    const scheduledTime = new Date().toISOString();
+    const now = new Date();
+    // Округляем до минут (убираем секунды)
+    const scheduledTime = generateScheduledTimeKey(now);
     
     // Проверяем, не было ли уже отправлено
     const alreadySent = await wasNotificationSent(userId, notification.id, scheduledTime);
     
     if (alreadySent) {
-      console.log(`⏭️ Уведомление ${notification.id} уже было отправлено`);
-      return;
+      console.log(`⏭️ Уведомление ${notification.id} уже было отправлено в ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`);
+      return false;
     }
     
     // Формируем текст уведомления
@@ -96,6 +146,14 @@ async function sendNotificationToUser(chatId, userId, notification) {
 ${activityLabel}
 ${notification.comment ? `\n💬 ${notification.comment}` : ''}
     `.trim();
+    
+    // Отмечаем как отправленное ПЕРЕД отправкой (защита от race condition)
+    await markNotificationAsSent(
+      userId, 
+      notification.id, 
+      scheduledTime, 
+      notification.notification_type || 'time_based'
+    );
     
     // Отправляем уведомление
     await bot.sendMessage(chatId, message, {
@@ -111,17 +169,11 @@ ${notification.comment ? `\n💬 ${notification.comment}` : ''}
       }
     });
     
-    // Отмечаем как отправленное
-    await markNotificationAsSent(
-      userId, 
-      notification.id, 
-      scheduledTime, 
-      notification.notification_type || 'time_based'
-    );
-    
     console.log(`✅ Уведомление ${notification.id} отправлено пользователю ${chatId}`);
+    return true;
   } catch (error) {
     console.error('Error sending notification:', error);
+    return false;
   }
 }
 
@@ -144,6 +196,8 @@ function getActivityLabel(activityType) {
 /**
  * Проверяет и отправляет уведомления (вызывается периодически)
  */
+let lastCheckedMinute = null; // Запоминаем последнюю проверенную минуту
+
 async function checkAndSendNotifications() {
   if (!supabase) {
     console.log('⚠️ Supabase не настроен, уведомления отключены');
@@ -154,6 +208,15 @@ async function checkAndSendNotifications() {
     const now = new Date();
     const currentTime = now.toTimeString().slice(0, 5); // HH:MM
     const currentDay = now.getDay(); // 0-6
+    const currentMinuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
+    
+    // Пропускаем, если уже проверяли эту минуту
+    if (lastCheckedMinute === currentMinuteKey) {
+      return;
+    }
+    
+    lastCheckedMinute = currentMinuteKey;
+    console.log(`🔍 Проверка уведомлений на ${currentTime}, день ${currentDay}...`);
     
     // Получаем все активные уведомления
     const { data: notifications, error } = await supabase
@@ -164,36 +227,56 @@ async function checkAndSendNotifications() {
     if (error) throw error;
     
     if (!notifications || notifications.length === 0) {
+      console.log('📭 Активных уведомлений не найдено');
       return;
     }
     
-    console.log(`🔍 Проверка ${notifications.length} уведомлений...`);
+    console.log(`📬 Найдено ${notifications.length} активных уведомлений`);
     
     for (const notification of notifications) {
-      // Time-based уведомления
-      if (notification.notification_type === 'time_based') {
-        const notificationTime = notification.notification_time?.slice(0, 5);
-        const repeatDays = notification.repeat_days || [];
-        
-        // Проверяем время и день недели
-        if (notificationTime === currentTime && repeatDays.includes(currentDay)) {
-          // Получаем user_id из записи
-          const userId = notification.user_id;
+      try {
+        // Time-based уведомления
+        if (notification.notification_type === 'time_based') {
+          const notificationTime = notification.notification_time?.slice(0, 5);
+          const repeatDays = notification.repeat_days || [];
           
-          // Здесь нужно получить chat_id пользователя
-          // В реальном приложении нужно сохранять chat_id при первом взаимодействии
-          // Для упрощения можно создать таблицу user_telegram_mapping
-          
-          console.log(`⏰ Время отправить уведомление: ${notification.title}`);
-          // await sendNotificationToUser(chatId, userId, notification);
+          // Проверяем время и день недели
+          if (notificationTime === currentTime && repeatDays.includes(currentDay)) {
+            const userId = notification.user_id;
+            
+            console.log(`⏰ Пора отправить уведомление: ${notification.title}`);
+            
+            // Получаем chat_id из таблицы user_telegram_mapping
+            const { data: mapping, error: mappingError } = await supabase
+              .from('user_telegram_mapping')
+              .select('chat_id')
+              .eq('user_id', userId)
+              .single();
+            
+            if (mappingError || !mapping) {
+              console.log(`❌ Не найден chat_id для пользователя ${userId}`);
+              continue;
+            }
+            
+            const chatId = mapping.chat_id;
+            
+            // Отправляем уведомление (с проверкой на дубли внутри)
+            const sent = await sendNotificationToUser(chatId, userId, notification);
+            
+            if (sent) {
+              console.log(`✅ Уведомление ${notification.id} успешно отправлено`);
+            }
+          }
         }
+        
+        // Interval-based уведомления
+        // TODO: Реализовать логику для интервальных уведомлений
+      } catch (notifError) {
+        console.error(`Error processing notification ${notification.id}:`, notifError);
       }
-      
-      // Interval-based уведомления
-      // TODO: Реализовать логику для интервальных уведомлений
     }
   } catch (error) {
-    console.error('Error checking notifications:', error);
+    console.error('Error in checkAndSendNotifications:', error);
   }
 }
 
@@ -213,12 +296,20 @@ bot.onText(/\/start/, (msg) => {
   const firstName = msg.from.first_name || 'друг';
   const userId = msg.from.id;
 
-  // Сохраняем chat_id для отправки уведомлений (опционально)
+  // Сохраняем chat_id для отправки уведомлений
   if (supabase) {
     supabase
       .from('user_telegram_mapping')
-      .upsert({ user_id: userId, chat_id: chatId, username: msg.from.username })
-      .then(() => console.log(`💾 Сохранен chat_id для пользователя ${userId}`))
+      .upsert(
+        { 
+          user_id: userId, 
+          chat_id: chatId, 
+          username: msg.from.username,
+          updated_at: new Date().toISOString()
+        },
+        { onConflict: 'user_id' }
+      )
+      .then(() => console.log(`💾 Сохранен chat_id ${chatId} для пользователя ${userId}`))
       .catch(err => console.error('Error saving chat_id:', err));
   }
 
