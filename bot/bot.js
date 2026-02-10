@@ -1,4 +1,5 @@
-// bot.js - Telegram Bot Server с защитой от дублирования уведомлений
+// bot.js - Telegram Bot Server (БЕЗ проверки уведомлений)
+// Уведомления обрабатываются через Edge Function на Supabase
 require('dotenv').config();
 const TelegramBot = require('node-telegram-bot-api');
 const { createClient } = require('@supabase/supabase-js');
@@ -7,7 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://your-app-url.vercel.app';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
-const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || ''; // Service role key для обхода RLS
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
 
 // Инициализация
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -17,300 +18,49 @@ const supabase = SUPABASE_URL && SUPABASE_SERVICE_KEY
 
 console.log('🤖 Бот запущен!');
 console.log('📊 Supabase:', supabase ? '✅ Подключен' : '❌ Не настроен');
-
-// ============================================
-// Функции для работы с уведомлениями
-// ============================================
-
-// In-memory кеш для быстрой проверки отправленных уведомлений
-const sentNotificationsCache = new Map();
-
-/**
- * Генерирует уникальный ключ для scheduledTime (до минут)
- */
-function generateScheduledTimeKey(currentDate) {
-  // Округляем до минут (убираем секунды и миллисекунды)
-  const rounded = new Date(currentDate);
-  rounded.setSeconds(0, 0);
-  return rounded.toISOString();
-}
-
-/**
- * Генерирует ключ для кеша
- */
-function generateCacheKey(userId, notificationId, scheduledTime) {
-  return `${userId}_${notificationId}_${scheduledTime}`;
-}
-
-/**
- * Проверяет, было ли уже отправлено уведомление
- */
-async function wasNotificationSent(userId, notificationId, scheduledTime) {
-  if (!supabase) return false;
-  
-  try {
-    const cacheKey = generateCacheKey(userId, notificationId, scheduledTime);
-    
-    // Проверяем кеш (мгновенно)
-    if (sentNotificationsCache.has(cacheKey)) {
-      console.log(`⚡ Cache hit: уведомление уже отправлено (${cacheKey})`);
-      return true;
-    }
-    
-    // Проверяем базу данных
-    const { data, error } = await supabase
-      .from('sent_notifications')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('notification_id', notificationId)
-      .eq('scheduled_time', scheduledTime)
-      .limit(1);
-    
-    if (error) throw error;
-    
-    const alreadySent = data && data.length > 0;
-    
-    // Добавляем в кеш если найдено
-    if (alreadySent) {
-      sentNotificationsCache.set(cacheKey, true);
-      // Очищаем кеш через 2 минуты
-      setTimeout(() => sentNotificationsCache.delete(cacheKey), 120000);
-    }
-    
-    return alreadySent;
-  } catch (error) {
-    console.error('Error checking sent notification:', error);
-    return false; // В случае ошибки разрешаем отправку
-  }
-}
-
-/**
- * Отмечает уведомление как отправленное
- */
-async function markNotificationAsSent(userId, notificationId, scheduledTime, notificationType) {
-  if (!supabase) return;
-  
-  try {
-    const cacheKey = generateCacheKey(userId, notificationId, scheduledTime);
-    
-    // Добавляем в кеш НЕМЕДЛЕННО (защита от race condition)
-    sentNotificationsCache.set(cacheKey, true);
-    setTimeout(() => sentNotificationsCache.delete(cacheKey), 120000);
-    
-    const { error } = await supabase
-      .from('sent_notifications')
-      .insert({
-        user_id: userId,
-        notification_id: notificationId,
-        scheduled_time: scheduledTime,
-        notification_type: notificationType
-      });
-    
-    if (error) {
-      // Игнорируем ошибки уникальности (уведомление уже отмечено)
-      if (error.code !== '23505') {
-        throw error;
-      } else {
-        console.log(`ℹ️ Уведомление уже помечено как отправленное в БД`);
-      }
-    } else {
-      console.log(`✅ Помечено как отправленное: user=${userId}, notif=${notificationId}`);
-    }
-  } catch (error) {
-    console.error('Error marking notification as sent:', error);
-  }
-}
-
-/**
- * Отправляет уведомление пользователю с защитой от дублирования
- */
-async function sendNotificationToUser(chatId, userId, notification) {
-  try {
-    const now = new Date();
-    // Округляем до минут (убираем секунды)
-    const scheduledTime = generateScheduledTimeKey(now);
-    
-    // Проверяем, не было ли уже отправлено
-    const alreadySent = await wasNotificationSent(userId, notification.id, scheduledTime);
-    
-    if (alreadySent) {
-      console.log(`⏭️ Уведомление ${notification.id} уже было отправлено в ${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`);
-      return false;
-    }
-    
-    // Формируем текст уведомления
-    const activityLabel = getActivityLabel(notification.activity_type);
-    const message = `
-🔔 Напоминание: ${notification.title}
-
-${activityLabel}
-${notification.comment ? `\n💬 ${notification.comment}` : ''}
-    `.trim();
-    
-    // Отмечаем как отправленное ПЕРЕД отправкой (защита от race condition)
-    await markNotificationAsSent(
-      userId, 
-      notification.id, 
-      scheduledTime, 
-      notification.notification_type || 'time_based'
-    );
-    
-    // Отправляем уведомление
-    await bot.sendMessage(chatId, message, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: '📊 Открыть приложение',
-              web_app: { url: WEB_APP_URL }
-            }
-          ]
-        ]
-      }
-    });
-    
-    console.log(`✅ Уведомление ${notification.id} отправлено пользователю ${chatId}`);
-    return true;
-  } catch (error) {
-    console.error('Error sending notification:', error);
-    return false;
-  }
-}
-
-/**
- * Получает название активности по типу
- */
-function getActivityLabel(activityType) {
-  const labels = {
-    breastfeeding: '🍼 Кормление грудью',
-    bottle: '🍼 Бутылочка',
-    sleep: '😴 Сон',
-    bath: '🛁 Купание',
-    walk: '🚶 Прогулка',
-    diaper: '🧷 Подгузник',
-    medicine: '💊 Лекарство'
-  };
-  return labels[activityType] || activityType;
-}
-
-/**
- * Проверяет и отправляет уведомления (вызывается периодически)
- */
-let lastCheckedMinute = null; // Запоминаем последнюю проверенную минуту
-
-async function checkAndSendNotifications() {
-  if (!supabase) {
-    console.log('⚠️ Supabase не настроен, уведомления отключены');
-    return;
-  }
-  
-  try {
-    const now = new Date();
-    const currentTime = now.toTimeString().slice(0, 5); // HH:MM
-    const currentDay = now.getDay(); // 0-6
-    const currentMinuteKey = `${now.getFullYear()}-${now.getMonth()}-${now.getDate()}-${now.getHours()}-${now.getMinutes()}`;
-    
-    // Пропускаем, если уже проверяли эту минуту
-    if (lastCheckedMinute === currentMinuteKey) {
-      return;
-    }
-    
-    lastCheckedMinute = currentMinuteKey;
-    console.log(`🔍 Проверка уведомлений на ${currentTime}, день ${currentDay}...`);
-    
-    // Получаем все активные уведомления
-    const { data: notifications, error } = await supabase
-      .from('notifications')
-      .select('*')
-      .eq('enabled', true);
-    
-    if (error) throw error;
-    
-    if (!notifications || notifications.length === 0) {
-      console.log('📭 Активных уведомлений не найдено');
-      return;
-    }
-    
-    console.log(`📬 Найдено ${notifications.length} активных уведомлений`);
-    
-    for (const notification of notifications) {
-      try {
-        // Time-based уведомления
-        if (notification.notification_type === 'time_based') {
-          const notificationTime = notification.notification_time?.slice(0, 5);
-          const repeatDays = notification.repeat_days || [];
-          
-          // Проверяем время и день недели
-          if (notificationTime === currentTime && repeatDays.includes(currentDay)) {
-            const userId = notification.user_id;
-            
-            console.log(`⏰ Пора отправить уведомление: ${notification.title}`);
-            
-            // Получаем chat_id из таблицы user_telegram_mapping
-            const { data: mapping, error: mappingError } = await supabase
-              .from('user_telegram_mapping')
-              .select('chat_id')
-              .eq('user_id', userId)
-              .single();
-            
-            if (mappingError || !mapping) {
-              console.log(`❌ Не найден chat_id для пользователя ${userId}`);
-              continue;
-            }
-            
-            const chatId = mapping.chat_id;
-            
-            // Отправляем уведомление (с проверкой на дубли внутри)
-            const sent = await sendNotificationToUser(chatId, userId, notification);
-            
-            if (sent) {
-              console.log(`✅ Уведомление ${notification.id} успешно отправлено`);
-            }
-          }
-        }
-        
-        // Interval-based уведомления
-        // TODO: Реализовать логику для интервальных уведомлений
-      } catch (notifError) {
-        console.error(`Error processing notification ${notification.id}:`, notifError);
-      }
-    }
-  } catch (error) {
-    console.error('Error in checkAndSendNotifications:', error);
-  }
-}
-
-// Запускаем проверку уведомлений каждую минуту
-if (supabase) {
-  setInterval(checkAndSendNotifications, 60000);
-  console.log('⏰ Проверка уведомлений запущена (каждую минуту)');
-}
+console.log('🔔 Уведомления обрабатываются через Edge Function');
 
 // ============================================
 // Обработчики команд бота
 // ============================================
 
 // Обработчик команды /start
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const firstName = msg.from.first_name || 'друг';
-  const userId = msg.from.id;
+  const telegramUserId = msg.from.id;
 
-  // Сохраняем chat_id для отправки уведомлений
+  // Сохраняем telegram_id в user_metadata через Supabase Auth
   if (supabase) {
-    supabase
-      .from('user_telegram_mapping')
-      .upsert(
-        { 
-          user_id: userId, 
-          chat_id: chatId, 
-          username: msg.from.username,
-          updated_at: new Date().toISOString()
-        },
-        { onConflict: 'user_id' }
-      )
-      .then(() => console.log(`💾 Сохранен chat_id ${chatId} для пользователя ${userId}`))
-      .catch(err => console.error('Error saving chat_id:', err));
+    try {
+      // Получаем пользователя по telegram_id из user_metadata
+      const { data: { users }, error } = await supabase.auth.admin.listUsers();
+      
+      if (error) throw error;
+      
+      // Ищем пользователя с таким telegram_id
+      const user = users?.find(u => 
+        u.user_metadata?.telegram_id === telegramUserId || 
+        u.raw_user_meta_data?.telegram_id === telegramUserId
+      );
+      
+      if (user) {
+        // Обновляем user_metadata с chat_id
+        await supabase.auth.admin.updateUserById(user.id, {
+          user_metadata: {
+            ...user.user_metadata,
+            telegram_id: telegramUserId,
+            telegram_chat_id: chatId,
+            telegram_username: msg.from.username
+          }
+        });
+        console.log(`💾 Обновлен user_metadata для пользователя ${user.id}: chat_id=${chatId}`);
+      } else {
+        console.log(`⚠️ Пользователь с telegram_id=${telegramUserId} не найден в Supabase Auth`);
+      }
+    } catch (err) {
+      console.error('Error updating user_metadata:', err);
+    }
   }
 
   const welcomeMessage = `
@@ -468,6 +218,7 @@ bot.on('callback_query', (query) => {
 • 🔄 Синхронизация между устройствами
 
 **Версия:** 2.0.0
+**Уведомления:** Edge Function (без дублей!)
 
 Сделано с ❤️ для заботливых родителей
       `.trim(), {
@@ -532,10 +283,10 @@ const server = http.createServer((req, res) => {
       uptime: process.uptime(),
       timestamp: new Date().toISOString(),
       bot: 'Baby Tracker Bot',
-      message: 'Bot is running',
-      notifications: supabase ? 'enabled' : 'disabled'
+      message: 'Bot is running (notifications via Edge Function)',
+      notifications: 'handled by Edge Function'
     }));
-    console.log(`Health check request from: ${req.socket.remoteAddress}`);
+    console.log(`Health check from: ${req.socket.remoteAddress}`);
   } else {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not Found');
@@ -543,7 +294,7 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`🌐 Health check server running on port ${PORT}`);
+  console.log(`🌐 Health check server on port ${PORT}`);
 });
 
 // ============================================
