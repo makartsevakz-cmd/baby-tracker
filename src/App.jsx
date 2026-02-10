@@ -1574,93 +1574,82 @@ const ActivityTracker = () => {
       return day;
     });
 
-    // Get activities for a specific hour and day with minute-level precision
-    const getActivitiesForCell = (day, hour) => {
-      const dayStr = day.toLocaleDateString('ru-RU');
-      const dayActivities = activities.filter(a => a.date === dayStr);
-      
-      return dayActivities.filter(activity => {
-        if (!activity.startTime) return false;
-        const startTime = new Date(activity.startTime);
-        const startHour = startTime.getHours();
-        
-        if (activity.endTime) {
-          const endTime = new Date(activity.endTime);
-          const endHour = endTime.getHours();
-          
-          // Activity spans this hour or starts/ends in this hour
-          if (startHour <= hour && endHour >= hour) {
-            return true;
-          }
-        } else {
-          // No end time, just check start hour
-          return startHour === hour;
-        }
-        
-        return false;
-      });
+    const getTimelineColorClass = (type) => {
+      const colorClass = activityTypes[type]?.color || '';
+
+      if (colorClass.includes('pink')) return 'bg-pink-500';
+      if (colorClass.includes('blue')) return 'bg-blue-500';
+      if (colorClass.includes('indigo')) return 'bg-indigo-500';
+      if (colorClass.includes('cyan')) return 'bg-cyan-500';
+      if (colorClass.includes('green')) return 'bg-green-500';
+      if (colorClass.includes('yellow')) return 'bg-yellow-500';
+      if (colorClass.includes('red')) return 'bg-red-500';
+
+      return 'bg-gray-500';
     };
 
-    // Get minute segments (0-59) for each activity in this hour
-    const getHourSegments = (day, hour, cellActivities) => {
-      const segments = Array(60).fill(null); // 60 minutes, each can have an activity
-      
+    const getActivitiesForCell = (day, hour) => {
+      const dayStr = day.toLocaleDateString('ru-RU');
+      const hourStart = new Date(day);
+      hourStart.setHours(hour, 0, 0, 0);
+
+      const hourEnd = new Date(hourStart);
+      hourEnd.setHours(hour + 1, 0, 0, 0);
+
+      return activities
+        .filter(a => a.date === dayStr && a.startTime)
+        .filter(activity => {
+          const startTime = new Date(activity.startTime);
+          const endTime = activity.endTime ? new Date(activity.endTime) : new Date(startTime.getTime() + 60000);
+          return startTime < hourEnd && endTime > hourStart;
+        })
+        .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+    };
+
+    const getHourTimelineSegments = (day, hour, cellActivities) => {
+      const hourStart = new Date(day);
+      hourStart.setHours(hour, 0, 0, 0);
+
+      const minuteMap = Array(60).fill(null);
+
       cellActivities.forEach(activity => {
-        if (!activity.startTime) return;
-        
         const startTime = new Date(activity.startTime);
-        const endTime = activity.endTime ? new Date(activity.endTime) : new Date(startTime.getTime() + 60000); // default 1 min
-        
-        const startHour = startTime.getHours();
-        const startMinute = startTime.getMinutes();
-        const endHour = endTime.getHours();
-        const endMinute = endTime.getMinutes();
-        
-        // Calculate which minutes in this hour are covered by this activity
-        let firstMinute = 0;
-        let lastMinute = 59;
-        
-        if (startHour === hour) {
-          firstMinute = startMinute;
-        }
-        
-        if (endHour === hour) {
-          lastMinute = endMinute;
-        } else if (endHour > hour) {
-          lastMinute = 59;
-        }
-        
-        // Fill the segments for this activity
-        for (let min = firstMinute; min <= lastMinute; min++) {
-          if (!segments[min]) { // Don't overwrite if another activity already claimed this minute
-            segments[min] = activity.type;
+        const endTime = activity.endTime ? new Date(activity.endTime) : new Date(startTime.getTime() + 60000);
+
+        const startMinute = Math.max(0, Math.floor((startTime - hourStart) / 60000));
+        const endMinute = Math.min(60, Math.ceil((endTime - hourStart) / 60000));
+
+        for (let min = startMinute; min < endMinute; min++) {
+          if (min >= 0 && min < 60 && !minuteMap[min]) {
+            minuteMap[min] = activity.type;
           }
         }
       });
-      
-      // Group consecutive segments of the same type
-      const groupedSegments = [];
-      let currentType = segments[0];
-      let currentStart = 0;
-      
-      for (let i = 1; i <= 60; i++) {
-        if (i === 60 || segments[i] !== currentType) {
-          if (currentType !== null) {
-            groupedSegments.push({
-              type: currentType,
-              startMinute: currentStart,
-              endMinute: i - 1,
-              width: ((i - currentStart) / 60) * 100 // percentage width
+
+      const segments = [];
+      let activeType = null;
+      let segmentStart = 0;
+
+      for (let min = 0; min <= 60; min++) {
+        const type = min < 60 ? minuteMap[min] : null;
+
+        if (type !== activeType) {
+          if (activeType) {
+            const widthMinutes = Math.max(1, min - segmentStart);
+            segments.push({
+              type: activeType,
+              left: (segmentStart / 60) * 100,
+              width: (widthMinutes / 60) * 100,
+              timelineColor: getTimelineColorClass(activeType),
             });
           }
-          if (i < 60) {
-            currentType = segments[i];
-            currentStart = i;
-          }
+
+          activeType = type;
+          segmentStart = min;
         }
       }
-      
-      return groupedSegments;
+
+      return segments;
     };
 
     const formatWeekRange = () => {
@@ -1738,15 +1727,15 @@ const ActivityTracker = () => {
             </div>
           </div>
 
-          {/* Heatmap Table */}
+          {/* Timeline Table */}
           <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 overflow-x-auto">
-            <div className="min-w-max">
-              <table className="w-full border-collapse">
+            <div className="min-w-[980px]">
+              <table className="w-full border-separate border-spacing-y-1">
                 <thead>
                   <tr>
-                    <th className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 sticky left-0 bg-white z-10">Час</th>
+                    <th className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 sticky left-0 bg-white z-10 w-20 text-left">Час</th>
                     {weekDays.map((day, i) => (
-                      <th key={i} className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 min-w-16">
+                      <th key={i} className="p-2 text-xs font-semibold text-gray-600 border-b-2 border-gray-200 min-w-[120px] text-left">
                         <div>{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
                         <div className="text-gray-400 font-normal">{day.getDate()}</div>
                       </th>
@@ -1755,76 +1744,28 @@ const ActivityTracker = () => {
                 </thead>
                 <tbody>
                   {Array.from({ length: 24 }, (_, hour) => (
-                    <tr key={hour} className="hover:bg-gray-50">
-                      <td className="p-1 text-xs text-gray-600 font-medium border-r border-gray-200 sticky left-0 bg-white">
+                    <tr key={hour}>
+                      <td className="p-2 text-xs text-gray-600 font-medium sticky left-0 bg-white z-10 border-r border-gray-100">
                         {hour.toString().padStart(2, '0')}:00
                       </td>
-                      {weekDays.map((day, i) => {
+                      {weekDays.map((day, dayIndex) => {
                         const cellActivities = getActivitiesForCell(day, hour);
-                        const segments = getHourSegments(day, hour, cellActivities);
-                        
+                        const segments = getHourTimelineSegments(day, hour, cellActivities);
+
                         return (
-                          <td
-                            key={i}
-                            className="p-0 border border-gray-200 relative group"
-                            style={{ height: '40px' }}
-                          >
-                            {segments.length > 0 ? (
-                              <>
-                                {/* Vertical timeline visualization */}
-                                <div className="flex flex-col h-full w-full">
-                                  {segments.map((segment, idx) => {
-                                    const colorClass = activityTypes[segment.type]?.color.replace('bg-', '') || 'gray-200';
-                                    const bgColor = colorClass.includes('pink') ? 'bg-pink-200' :
-                                                   colorClass.includes('blue') ? 'bg-blue-200' :
-                                                   colorClass.includes('indigo') ? 'bg-indigo-200' :
-                                                   colorClass.includes('cyan') ? 'bg-cyan-200' :
-                                                   colorClass.includes('green') ? 'bg-green-200' :
-                                                   colorClass.includes('yellow') ? 'bg-yellow-200' :
-                                                   colorClass.includes('red') ? 'bg-red-200' : 'bg-gray-200';
-                                    
-                                    return (
-                                      <div
-                                        key={idx}
-                                        className={`${bgColor} border-b border-white last:border-b-0`}
-                                        style={{ height: `${segment.width}%` }}
-                                        title={`${activityTypes[segment.type]?.label}: ${segment.startMinute}-${segment.endMinute} мин`}
-                                      />
-                                    );
-                                  })}
-                                </div>
-                                
-                                {/* Tooltip on hover */}
-                                <div className="absolute left-0 top-full mt-1 bg-gray-900 text-white text-xs rounded-lg p-2 hidden group-hover:block z-20 whitespace-nowrap shadow-lg">
-                                  {cellActivities.map((act, idx) => {
-                                    const ActivityIcon = activityTypes[act.type]?.icon;
-                                    const startTime = new Date(act.startTime);
-                                    const endTime = act.endTime ? new Date(act.endTime) : null;
-                                    
-                                    let timeRange = '';
-                                    if (startTime.getHours() === hour && endTime && endTime.getHours() === hour) {
-                                      timeRange = `${startTime.getMinutes().toString().padStart(2, '0')}-${endTime.getMinutes().toString().padStart(2, '0')}`;
-                                    } else if (startTime.getHours() === hour) {
-                                      timeRange = `${startTime.getMinutes().toString().padStart(2, '0')}-59`;
-                                    } else if (endTime && endTime.getHours() === hour) {
-                                      timeRange = `00-${endTime.getMinutes().toString().padStart(2, '0')}`;
-                                    } else {
-                                      timeRange = '00-59';
-                                    }
-                                    
-                                    return (
-                                      <div key={idx} className="flex items-center gap-2 mb-1 last:mb-0">
-                                        {ActivityIcon && <ActivityIcon className="w-3 h-3" />}
-                                        <span>{activityTypes[act.type]?.label}</span>
-                                        <span className="text-gray-400">({timeRange})</span>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              </>
-                            ) : (
-                              <div className="h-full bg-gray-50"></div>
-                            )}
+                          <td key={dayIndex} className="p-1">
+                            <div className="relative h-8 rounded-lg border border-gray-200 bg-gray-50 overflow-hidden">
+                              {segments.map((segment, index) => (
+                                <div
+                                  key={`${hour}-${dayIndex}-${index}`}
+                                  className={`absolute top-1/2 -translate-y-1/2 h-3 rounded-full ${segment.timelineColor}`}
+                                  style={{
+                                    left: `${segment.left}%`,
+                                    width: `${Math.max(segment.width, 0.5)}%`,
+                                  }}
+                                />
+                              ))}
+                            </div>
                           </td>
                         );
                       })}
@@ -1841,9 +1782,11 @@ const ActivityTracker = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
               {Object.entries(activityTypes).map(([key, data]) => {
                 const Icon = data.icon;
+                const timelineColor = getTimelineColorClass(key);
                 return (
-                  <div key={key} className={`${data.color} rounded-lg p-2 flex items-center gap-2`}>
-                    <Icon className="w-4 h-4 flex-shrink-0" />
+                  <div key={key} className="rounded-lg p-2 flex items-center gap-2 border border-gray-200 bg-white">
+                    <span className={`w-3 h-3 rounded-full ${timelineColor} flex-shrink-0`} />
+                    <Icon className="w-4 h-4 flex-shrink-0 text-gray-500" />
                     <span className="text-xs font-medium">{data.label}</span>
                   </div>
                 );
@@ -1858,7 +1801,10 @@ const ActivityTracker = () => {
               <div className="space-y-3">
                 {Object.entries(weekStats).map(([type, data]) => {
                   const ActivityIcon = activityTypes[type]?.icon;
-                  const duration = formatDuration(0, data.totalDuration);
+                  const avgCountPerDay = data.count / 7;
+                  const avgDurationPerDay = data.totalDuration / 7;
+                  const avgDuration = formatDuration(0, avgDurationPerDay);
+
                   return (
                     <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
                       <div className="flex items-center justify-between">
@@ -1867,10 +1813,10 @@ const ActivityTracker = () => {
                           <span className="font-semibold">{activityTypes[type]?.label}</span>
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold">{data.count} раз</div>
-                          {duration && (
+                          <div className="font-semibold">{avgCountPerDay.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} / день</div>
+                          {avgDuration && (
                             <div className="text-sm opacity-75">
-                              {duration}
+                              {avgDuration} / день
                             </div>
                           )}
                         </div>
