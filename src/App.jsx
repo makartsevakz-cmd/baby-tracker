@@ -10,6 +10,7 @@ const ActivityTracker = () => {
   const [selectedActivity, setSelectedActivity] = useState(null);
   const [timers, setTimers] = useState({});
   const [pausedTimers, setPausedTimers] = useState({});
+  const [timerMeta, setTimerMeta] = useState({});
   const [formData, setFormData] = useState({});
   const [editingId, setEditingId] = useState(null);
   const [tg, setTg] = useState(null);
@@ -207,8 +208,10 @@ const ActivityTracker = () => {
           // Load timers from localStorage (they're temporary, not in DB)
           const savedTimers = localStorage.getItem('active_timers');
           const savedPaused = localStorage.getItem('paused_timers');
+          const savedTimerMeta = localStorage.getItem('timer_meta');
           if (savedTimers) setTimers(JSON.parse(savedTimers));
           if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
+          if (savedTimerMeta) setTimerMeta(JSON.parse(savedTimerMeta));
           
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
@@ -234,12 +237,14 @@ const ActivityTracker = () => {
     const savedActivities = localStorage.getItem('baby_activities');
     const savedTimers = localStorage.getItem('active_timers');
     const savedPaused = localStorage.getItem('paused_timers');
+    const savedTimerMeta = localStorage.getItem('timer_meta');
     const savedProfile = localStorage.getItem('baby_profile');
     const savedGrowth = localStorage.getItem('growth_data');
     
     if (savedActivities) setActivities(JSON.parse(savedActivities));
     if (savedTimers) setTimers(JSON.parse(savedTimers));
     if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
+    if (savedTimerMeta) setTimerMeta(JSON.parse(savedTimerMeta));
     if (savedProfile) setBabyProfile(JSON.parse(savedProfile));
     if (savedGrowth) setGrowthData(JSON.parse(savedGrowth));
   };
@@ -272,6 +277,32 @@ const ActivityTracker = () => {
       delete newPaused[timerType];
       return newPaused;
     });
+
+    if (timerType === 'left' || timerType === 'right') {
+      setTimerMeta(prev => {
+        if (!prev.breastfeedingStartTime) return prev;
+
+        const hasOtherBreastTimer = timerType === 'left'
+          ? Boolean(timers.right || pausedTimers.right)
+          : Boolean(timers.left || pausedTimers.left);
+
+        if (hasOtherBreastTimer) return prev;
+
+        const updatedMeta = { ...prev };
+        delete updatedMeta.breastfeedingStartTime;
+        return updatedMeta;
+      });
+    }
+
+    if (timerType === 'sleep' || timerType === 'walk') {
+      setTimerMeta(prev => {
+        const metaKey = `${timerType}StartTime`;
+        if (!prev[metaKey]) return prev;
+        const updatedMeta = { ...prev };
+        delete updatedMeta[metaKey];
+        return updatedMeta;
+      });
+    }
   };
 
   const saveActivity = useCallback(async () => {
@@ -302,20 +333,31 @@ const ActivityTracker = () => {
     if (formData.type === 'breastfeeding') {
       let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : (editingId ? 0 : getTotalDuration('left'));
       let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : (editingId ? 0 : getTotalDuration('right'));
+      const totalDuration = leftDuration + rightDuration;
+      const breastfeedingStartTime = timerMeta.breastfeedingStartTime || formData.startTime;
 
       activityData.leftDuration = leftDuration;
       activityData.rightDuration = rightDuration;
-      activityData.endTime = new Date(new Date(formData.startTime).getTime() + (leftDuration + rightDuration) * 1000).toISOString();
+      activityData.startTime = breastfeedingStartTime;
+      activityData.endTime = new Date(new Date(breastfeedingStartTime).getTime() + totalDuration * 1000).toISOString();
       
       if (!editingId) {
         resetTimer('left');
         resetTimer('right');
+        setTimerMeta(prev => {
+          if (!prev.breastfeedingStartTime) return prev;
+          const updatedMeta = { ...prev };
+          delete updatedMeta.breastfeedingStartTime;
+          return updatedMeta;
+        });
       }
     } else if (formData.type === 'sleep' || formData.type === 'walk') {
       const timerKey = formData.type;
       if (!editingId && (timers[timerKey] || pausedTimers[timerKey])) {
         const duration = getTotalDuration(timerKey);
-        activityData.endTime = new Date(new Date(formData.startTime).getTime() + duration * 1000).toISOString();
+        const timerStartTime = timerMeta[`${timerKey}StartTime`] || formData.startTime;
+        activityData.startTime = timerStartTime;
+        activityData.endTime = new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
         resetTimer(timerKey);
       } else if (formData.endTime) {
         activityData.endTime = formData.endTime;
@@ -362,7 +404,7 @@ const ActivityTracker = () => {
     setFormData({});
     setEditingId(null);
     setIsSaving(false);
-  }, [formData, tg, timers, pausedTimers, editingId, getTotalDuration, resetTimer, isAuthenticated, activities, isSaving]);
+  }, [formData, tg, timers, pausedTimers, timerMeta, editingId, getTotalDuration, resetTimer, isAuthenticated, activities, isSaving]);
 
   const deleteActivity = async (id) => {
     if (tg) tg.HapticFeedback?.notificationOccurred('warning');
@@ -501,8 +543,9 @@ const ActivityTracker = () => {
       // Only save timers to localStorage (they're temporary)
       localStorage.setItem('active_timers', JSON.stringify(timers));
       localStorage.setItem('paused_timers', JSON.stringify(pausedTimers));
+      localStorage.setItem('timer_meta', JSON.stringify(timerMeta));
     }
-  }, [timers, pausedTimers, isLoading]);
+  }, [timers, pausedTimers, timerMeta, isLoading]);
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);
@@ -588,12 +631,36 @@ const ActivityTracker = () => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     setSelectedActivity(type);
     
-    // Set form data with current timer values
-    const now = new Date().toISOString();
+    // Keep original timer start time so saved interval is correct
+    const getTimerStartTime = (timerKey) => {
+      if (timers[timerKey]) {
+        return new Date(timers[timerKey]).toISOString();
+      }
+
+      if (pausedTimers[timerKey]) {
+        return new Date(Date.now() - pausedTimers[timerKey]).toISOString();
+      }
+
+      return null;
+    };
+
+    const startTime = type === 'breastfeeding'
+      ? (
+        timerMeta.breastfeedingStartTime
+        || getTimerStartTime('left')
+        || getTimerStartTime('right')
+        || new Date().toISOString()
+      )
+      : (
+        timerMeta[`${type}StartTime`]
+        || getTimerStartTime(type)
+        || new Date().toISOString()
+      );
+
     if (type === 'breastfeeding') {
       setFormData({ 
         type, 
-        startTime: now, 
+        startTime,
         comment: '',
         leftDuration: getTotalDuration('left'),
         rightDuration: getTotalDuration('right'),
@@ -603,7 +670,7 @@ const ActivityTracker = () => {
     } else {
       setFormData({ 
         type, 
-        startTime: now, 
+        startTime,
         comment: '' 
       });
     }
@@ -806,7 +873,39 @@ const ActivityTracker = () => {
   const startTimer = (timerType, activityType) => {
     if (tg) tg.HapticFeedback?.impactOccurred('medium');
     const key = activityType === 'sleep' ? 'sleep' : activityType === 'walk' ? 'walk' : timerType;
-    setTimers(prev => ({ ...prev, [key]: Date.now() - (pausedTimers[key] || 0) }));
+    const now = Date.now();
+
+    if (activityType === 'breastfeeding' && (timerType === 'left' || timerType === 'right')) {
+      const otherSide = timerType === 'left' ? 'right' : 'left';
+
+      setTimers(prev => {
+        const updatedTimers = { ...prev };
+
+        if (updatedTimers[otherSide]) {
+          setPausedTimers(prevPaused => ({
+            ...prevPaused,
+            [otherSide]: now - updatedTimers[otherSide]
+          }));
+          delete updatedTimers[otherSide];
+        }
+
+        updatedTimers[key] = now - (pausedTimers[key] || 0);
+        return updatedTimers;
+      });
+
+      setTimerMeta(prev => ({
+        ...prev,
+        breastfeedingStartTime: prev.breastfeedingStartTime || new Date(now).toISOString()
+      }));
+
+      return;
+    }
+
+    setTimers(prev => ({ ...prev, [key]: now - (pausedTimers[key] || 0) }));
+    setTimerMeta(prev => ({
+      ...prev,
+      [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (pausedTimers[key] || 0)).toISOString()
+    }));
   };
 
   const pauseTimer = (timerType, activityType) => {
