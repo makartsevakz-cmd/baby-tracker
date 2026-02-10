@@ -81,7 +81,7 @@ const ActivityTracker = () => {
     const parsedStartTime = Number(startTime);
     const parsedPausedDuration = Number(pausedDuration) || 0;
     const diff = Number.isFinite(parsedStartTime)
-      ? Math.max(0, Date.now() - parsedStartTime + parsedPausedDuration)
+      ? Math.max(0, Date.now() - parsedStartTime)
       : Math.max(0, parsedPausedDuration);
     const hours = Math.floor(diff / 3600000);
     const minutes = Math.floor((diff % 3600000) / 60000);
@@ -628,7 +628,7 @@ const ActivityTracker = () => {
     const baseData = { type, startTime: now, comment: '' };
     
     if (type === 'breastfeeding') {
-      setFormData({ ...baseData, leftDuration: 0, rightDuration: 0, manualLeftMinutes: '', manualRightMinutes: '' });
+      setFormData({ ...baseData, leftDuration: 0, rightDuration: 0, manualLeftMinutes: '', manualRightMinutes: '', timeInputMode: null });
     } else if (type === 'bottle') {
       setFormData({ ...baseData, foodType: 'breast_milk', amount: '' });
     } else if (type === 'diaper') {
@@ -684,7 +684,8 @@ const ActivityTracker = () => {
         leftDuration: getTotalDuration('left'),
         rightDuration: getTotalDuration('right'),
         manualLeftMinutes: '',
-        manualRightMinutes: ''
+        manualRightMinutes: '',
+        timeInputMode: 'timer'
       });
     } else {
       const hasTimerData = Boolean(timers[type] || pausedTimers[type]);
@@ -919,6 +920,13 @@ const ActivityTracker = () => {
         breastfeedingStartTime: prev.breastfeedingStartTime || new Date(now).toISOString()
       }));
 
+      setFormData(prev => ({
+        ...prev,
+        timeInputMode: 'timer',
+        manualLeftMinutes: '',
+        manualRightMinutes: '',
+      }));
+
       return;
     }
 
@@ -954,6 +962,25 @@ const ActivityTracker = () => {
   const handleSleepWalkManualChange = (field, value) => {
     if (timers[selectedActivity] || pausedTimers[selectedActivity]) {
       resetTimer(selectedActivity);
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      [field]: value,
+      timeInputMode: 'manual',
+    }));
+  };
+
+  const handleBreastfeedingManualChange = (field, value) => {
+    if (!editingId && (timers.left || timers.right || pausedTimers.left || pausedTimers.right)) {
+      resetTimer('left');
+      resetTimer('right');
+      setTimerMeta(prev => {
+        if (!prev.breastfeedingStartTime) return prev;
+        const updatedMeta = { ...prev };
+        delete updatedMeta.breastfeedingStartTime;
+        return updatedMeta;
+      });
     }
 
     setFormData(prev => ({
@@ -1022,35 +1049,42 @@ const ActivityTracker = () => {
                         <div key={side} className="border-2 border-pink-200 rounded-lg p-4">
                           <div className="text-center mb-2 font-medium">{side === 'left' ? 'Левая' : 'Правая'} грудь</div>
                           <div className="text-2xl font-mono text-center mb-3">
-                            {timers[side] ? getTimerDuration(timers[side], pausedTimers[side]) : formatSeconds(getTotalDuration(side))}
+                            {formatSeconds(getTotalDuration(side))}
                           </div>
                           <button
                             onClick={() => timers[side] ? pauseTimer(side, 'breastfeeding') : startTimer(side, 'breastfeeding')}
+                            disabled={formData.timeInputMode === 'manual' && !timers[side]}
                             className={`w-full py-2 rounded-lg flex items-center justify-center mb-2 ${
                               timers[side] ? 'bg-red-500 text-white' : 'bg-pink-500 text-white'
-                            }`}
+                            } ${(formData.timeInputMode === 'manual' && !timers[side]) ? 'opacity-50 cursor-not-allowed' : ''}`}
                           >
                             {timers[side] ? <><Pause className="w-4 h-4 mr-2" />Стоп</> : <><Play className="w-4 h-4 mr-2" />Старт</>}
                           </button>
                           <input
                             type="number"
                             placeholder="или мин"
-                            className="w-full border border-gray-300 rounded-lg p-2 text-center text-sm"
+                            className="w-full border border-gray-300 rounded-lg p-2 text-center text-sm disabled:bg-gray-100 disabled:text-gray-500"
+                            disabled={formData.timeInputMode === 'timer'}
                             value={formData[`manual${side === 'left' ? 'Left' : 'Right'}Minutes`] || ''}
-                            onChange={(e) => setFormData(prev => ({ ...prev, [`manual${side === 'left' ? 'Left' : 'Right'}Minutes`]: e.target.value }))}
+                            onChange={(e) => handleBreastfeedingManualChange(`manual${side === 'left' ? 'Left' : 'Right'}Minutes`, e.target.value)}
                           />
                         </div>
                       ))}
                     </div>
+                  )}
+
+                  {!editingId && formData.timeInputMode === 'manual' && (
+                    <div className="text-xs text-center text-gray-500">Таймер недоступен при ручном вводе</div>
                   )}
                   
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
                     <input
                       type="datetime-local"
-                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500"
                       value={toLocalDateTimeString(formData.startTime)}
-                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                      disabled={!editingId && formData.timeInputMode === 'timer'}
+                      onChange={(e) => handleBreastfeedingManualChange('startTime', fromLocalDateTimeString(e.target.value))}
                     />
                   </div>
                   
