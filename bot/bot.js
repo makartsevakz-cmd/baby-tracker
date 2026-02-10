@@ -201,7 +201,7 @@ async function checkAndSendNotifications() {
       .from('notifications')
       .select('*')
       .eq('enabled', true)
-      .eq('notification_type', 'time_based');
+      .in('notification_type', ['time', 'time_based']);
     
     if (error) {
       console.error('Error fetching notifications:', error);
@@ -227,22 +227,14 @@ async function checkAndSendNotifications() {
         
         console.log(`⏰ Нужно отправить: ${notification.title} (ID: ${notification.id})`);
         
-        // Получаем user_id
+        // Получаем chat_id пользователя
         const userId = notification.user_id;
+        const chatId = await resolveChatId(userId);
         
-        // Получаем chat_id из user_telegram_mapping
-        const { data: mapping, error: mappingError } = await supabase
-          .from('user_telegram_mapping')
-          .select('chat_id')
-          .eq('user_id', userId)
-          .single();
-        
-        if (mappingError || !mapping) {
+        if (!chatId) {
           console.log(`❌ Не найден chat_id для пользователя ${userId}`);
           continue;
         }
-        
-        const chatId = mapping.chat_id;
         
         // Отправляем с атомарной защитой
         await sendNotificationSafe(chatId, notification, currentMinute);
@@ -257,6 +249,55 @@ async function checkAndSendNotifications() {
   } finally {
     isChecking = false;
   }
+}
+
+/**
+ * Возвращает chat_id для пользователя Supabase Auth.
+ *
+ * Поддерживает несколько сценариев:
+ * 1) Текущий: user_telegram_mapping.user_id = auth user id (uuid)
+ * 2) Legacy: user_telegram_mapping.user_id = telegram user id (number)
+ * 3) Fallback: chat_id совпадает с telegram_id
+ */
+async function resolveChatId(userId) {
+  if (!supabase) return null;
+
+  // 1) Прямое соответствие auth user id -> chat_id
+  const { data: directMapping } = await supabase
+    .from('user_telegram_mapping')
+    .select('chat_id')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (directMapping?.chat_id) {
+    return directMapping.chat_id;
+  }
+
+  // 2) Получаем telegram_id из метаданных auth пользователя
+  const { data: authUserData, error: authUserError } = await supabase.auth.admin.getUserById(userId);
+  if (authUserError) {
+    console.error(`Failed to get auth user ${userId}:`, authUserError);
+    return null;
+  }
+
+  const telegramId = authUserData?.user?.user_metadata?.telegram_id;
+  if (!telegramId) {
+    return null;
+  }
+
+  // 3) Legacy таблица: user_id хранит telegram id
+  const { data: legacyMapping } = await supabase
+    .from('user_telegram_mapping')
+    .select('chat_id')
+    .eq('user_id', telegramId)
+    .maybeSingle();
+
+  if (legacyMapping?.chat_id) {
+    return legacyMapping.chat_id;
+  }
+
+  // 4) Для личных чатов Telegram chat_id == telegram user id
+  return telegramId;
 }
 
 // Запускаем проверку каждую минуту
