@@ -102,14 +102,60 @@ const ActivityTracker = () => {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  const BURP_COMMENT_PREFIX = '[BURP_DATA]';
+
+  const serializeBurpComment = (comment, burpData) => {
+    const payload = {
+      comment: comment || '',
+      color: burpData?.burpColor || null,
+      consistency: burpData?.burpConsistency || null,
+      volume: burpData?.burpVolume || null,
+    };
+
+    return `${BURP_COMMENT_PREFIX}${JSON.stringify(payload)}`;
+  };
+
+  const parseBurpComment = (comment) => {
+    if (typeof comment !== 'string' || !comment.startsWith(BURP_COMMENT_PREFIX)) {
+      return {
+        comment: comment || '',
+        burpColor: null,
+        burpConsistency: null,
+        burpVolume: null,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(comment.slice(BURP_COMMENT_PREFIX.length));
+      return {
+        comment: parsed.comment || '',
+        burpColor: parsed.color || null,
+        burpConsistency: parsed.consistency || null,
+        burpVolume: parsed.volume || null,
+      };
+    } catch (error) {
+      console.error('Failed to parse burp payload from comment:', error);
+      return {
+        comment,
+        burpColor: null,
+        burpConsistency: null,
+        burpVolume: null,
+      };
+    }
+  };
+
   // Convert Supabase activity to app format
   const convertFromSupabaseActivity = (dbActivity) => {
+    const parsedBurpComment = dbActivity.type === 'burp'
+      ? parseBurpComment(dbActivity.comment)
+      : null;
+
     return {
       id: dbActivity.id,
       type: dbActivity.type,
       startTime: dbActivity.start_time,
       endTime: dbActivity.end_time,
-      comment: dbActivity.comment,
+      comment: parsedBurpComment?.comment ?? dbActivity.comment,
       date: new Date(dbActivity.start_time).toLocaleDateString('ru-RU'),
       // Type-specific fields
       leftDuration: dbActivity.left_duration,
@@ -118,26 +164,30 @@ const ActivityTracker = () => {
       amount: dbActivity.amount,
       diaperType: dbActivity.diaper_type,
       medicineName: dbActivity.medicine_name,
-      burpColor: dbActivity.food_type,
-      burpConsistency: dbActivity.diaper_type,
-      burpVolume: dbActivity.medicine_name,
+      burpColor: parsedBurpComment?.burpColor ?? dbActivity.food_type,
+      burpConsistency: parsedBurpComment?.burpConsistency ?? dbActivity.diaper_type,
+      burpVolume: parsedBurpComment?.burpVolume ?? dbActivity.medicine_name,
     };
   };
 
   // Convert app activity to Supabase format
   const convertToSupabaseActivity = (activity) => {
+    const isBurp = activity.type === 'burp';
+
     return {
       type: activity.type,
       startTime: activity.startTime,
       endTime: activity.endTime,
-      comment: activity.comment,
+      comment: isBurp
+        ? serializeBurpComment(activity.comment, activity)
+        : activity.comment,
       // Type-specific fields
       leftDuration: activity.leftDuration,
       rightDuration: activity.rightDuration,
-      foodType: activity.foodType,
+      foodType: isBurp ? null : activity.foodType,
       amount: activity.type === 'bottle' && activity.amount ? parseInt(activity.amount, 10) : null,
-      diaperType: activity.diaperType,
-      medicineName: activity.medicineName,
+      diaperType: isBurp ? null : activity.diaperType,
+      medicineName: isBurp ? null : activity.medicineName,
     };
   };
 
@@ -415,9 +465,9 @@ const ActivityTracker = () => {
       }
     } else if (formData.type === 'burp') {
       activityData.endTime = null;
-      activityData.foodType = formData.burpColor;
-      activityData.diaperType = formData.burpConsistency;
-      activityData.medicineName = formData.burpVolume;
+      activityData.foodType = null;
+      activityData.diaperType = null;
+      activityData.medicineName = null;
     } else if (!['bath', 'diaper', 'medicine', 'burp'].includes(formData.type) && !activityData.endTime) {
       activityData.endTime = new Date().toISOString();
     }
