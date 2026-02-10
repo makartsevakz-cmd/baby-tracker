@@ -1681,60 +1681,49 @@ const ActivityTracker = () => {
       return 'bg-gray-400';
     };
 
-    const getDayTimelineSegments = (day) => {
-      const dayStart = new Date(day);
-      dayStart.setHours(0, 0, 0, 0);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayStart.getDate() + 1);
+    const indicatorColors = {
+      breastfeeding: '#ec4899',
+      bottle: '#3b82f6',
+      sleep: '#6366f1',
+      bath: '#06b6d4',
+      walk: '#22c55e',
+      activity: '#f97316',
+      burp: '#84cc16',
+      diaper: '#eab308',
+      medicine: '#ef4444',
+    };
 
-      const overlappingActivities = activities
-        .filter((activity) => activity.startTime)
-        .map((activity) => {
-          const startTime = new Date(activity.startTime);
-          const rawEndTime = activity.endTime ? new Date(activity.endTime) : new Date(startTime.getTime() + 10 * 60 * 1000);
-          const endTime = rawEndTime > startTime ? rawEndTime : new Date(startTime.getTime() + 5 * 60 * 1000);
+    const getCellSummary = (day, hour) => {
+      const hourStart = new Date(day);
+      hourStart.setHours(hour, 0, 0, 0);
+      const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
 
-          if (endTime <= dayStart || startTime >= dayEnd) {
-            return null;
-          }
+      const minutesByType = {};
 
-          const clampedStart = startTime < dayStart ? dayStart : startTime;
-          const clampedEnd = endTime > dayEnd ? dayEnd : endTime;
+      activities.forEach((activity) => {
+        if (!activity.startTime) return;
 
-          const startMinute = Math.max(0, (clampedStart - dayStart) / 60000);
-          const endMinute = Math.min(24 * 60, (clampedEnd - dayStart) / 60000);
+        const startTime = new Date(activity.startTime);
+        const fallbackEnd = new Date(startTime.getTime() + 10 * 60 * 1000);
+        const rawEndTime = activity.endTime ? new Date(activity.endTime) : fallbackEnd;
+        const endTime = rawEndTime > startTime ? rawEndTime : new Date(startTime.getTime() + 5 * 60 * 1000);
 
-          return {
-            id: activity.id,
-            type: activity.type,
-            startMinute,
-            endMinute,
-            originalStart: startTime,
-            originalEnd: endTime,
-          };
-        })
-        .filter(Boolean)
-        .sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute);
+        if (endTime <= hourStart || startTime >= hourEnd) return;
 
-      const lanes = [];
-      const layoutSegments = overlappingActivities.map((segment) => {
-        let laneIndex = lanes.findIndex((laneEnd) => laneEnd <= segment.startMinute);
-        if (laneIndex === -1) {
-          laneIndex = lanes.length;
-          lanes.push(segment.endMinute);
-        } else {
-          lanes[laneIndex] = segment.endMinute;
-        }
+        const segmentStart = startTime < hourStart ? hourStart : startTime;
+        const segmentEnd = endTime > hourEnd ? hourEnd : endTime;
+        const durationMinutes = Math.max(0, (segmentEnd - segmentStart) / 60000);
 
-        return {
-          ...segment,
-          laneIndex,
-        };
+        minutesByType[activity.type] = (minutesByType[activity.type] || 0) + durationMinutes;
       });
 
+      const dominantType = Object.entries(minutesByType)
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      const totalMinutes = Math.min(60, Object.values(minutesByType).reduce((sum, minutes) => sum + minutes, 0));
+
       return {
-        segments: layoutSegments,
-        laneCount: Math.max(1, lanes.length),
+        dominantType,
+        fillPercent: Math.round((totalMinutes / 60) * 100),
       };
     };
 
@@ -1815,79 +1804,43 @@ const ActivityTracker = () => {
 
           {/* Timeline Table */}
           <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 overflow-x-auto">
-            <div className="min-w-[980px]">
-              <div className="grid grid-cols-[88px_1fr] border-b border-gray-200 pb-2 mb-2">
-                <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide">День</div>
-                <div className="relative h-6">
-                  {Array.from({ length: 25 }, (_, hour) => (
-                    <div
-                      key={hour}
-                      className="absolute top-0 -translate-x-1/2 text-[10px] text-gray-400"
-                      style={{ left: `${(hour / 24) * 100}%` }}
-                    >
-                      {hour.toString().padStart(2, '0')}
-                    </div>
-                  ))}
-                </div>
+            <div>
+              <div className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 mb-2">
+                <div className="text-[11px] text-gray-400 font-semibold uppercase text-center pt-1">Час</div>
+                {weekDays.map((day, i) => (
+                  <div key={i} className="text-center leading-tight">
+                    <div className="text-xs font-semibold text-gray-600 uppercase">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+                    <div className="text-xs text-gray-400">{day.getDate()}</div>
+                  </div>
+                ))}
               </div>
 
               <div className="space-y-2">
-                {weekDays.map((day, i) => {
-                  const { segments, laneCount } = getDayTimelineSegments(day);
-                  const rowHeight = Math.max(28, laneCount * 18);
+                {Array.from({ length: 24 }, (_, hour) => (
+                  <div key={hour} className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 items-center">
+                    <div className="text-[12px] text-gray-400 text-center">{hour.toString().padStart(2, '0')}</div>
+                    {weekDays.map((day, dayIndex) => {
+                      const { dominantType, fillPercent } = getCellSummary(day, hour);
+                      const fillColor = dominantType ? indicatorColors[dominantType] : '#e5e7eb';
+                      const title = dominantType
+                        ? `${activityTypes[dominantType]?.label || 'Активность'} · занято ${fillPercent}% часа`
+                        : 'Нет активности';
 
-                  return (
-                    <div key={i} className="grid grid-cols-[88px_1fr] items-start gap-2">
-                      <div className="text-xs text-gray-600 pt-1">
-                        <div className="font-semibold">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
-                        <div className="text-gray-400">{day.getDate()}</div>
-                      </div>
-
-                      <div
-                        className="relative rounded-lg border border-gray-200 bg-white"
-                        style={{ height: `${rowHeight}px` }}
-                      >
-                        {Array.from({ length: 25 }, (_, hour) => (
-                          <div
-                            key={hour}
-                            className="absolute top-0 bottom-0 border-l border-gray-100"
-                            style={{ left: `${(hour / 24) * 100}%` }}
-                          />
-                        ))}
-
-                        {segments.length === 0 && (
-                          <div className="absolute inset-0 flex items-center px-3 text-[11px] text-gray-300">
-                            Нет активности
-                          </div>
-                        )}
-
-                        {segments.map((segment) => {
-                          const left = (segment.startMinute / (24 * 60)) * 100;
-                          const width = Math.max(((segment.endMinute - segment.startMinute) / (24 * 60)) * 100, 0.25);
-                          const ActivityIcon = activityTypes[segment.type]?.icon;
-
-                          return (
-                            <div
-                              key={`${segment.id}-${segment.laneIndex}-${segment.startMinute}`}
-                              className={`absolute rounded-md ${getIndicatorColorClass(segment.type)} shadow-sm`}
-                              style={{
-                                left: `${left}%`,
-                                width: `${width}%`,
-                                top: `${segment.laneIndex * 18 + 3}px`,
-                                height: '12px',
-                              }}
-                              title={`${activityTypes[segment.type]?.label || 'Активность'}: ${segment.originalStart.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })} - ${segment.originalEnd.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`}
-                            >
-                              {width > 5 && ActivityIcon && (
-                                <ActivityIcon className="w-3 h-3 text-white absolute left-1 top-1/2 -translate-y-1/2" />
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  );
-                })}
+                      return (
+                        <div
+                          key={`${hour}-${dayIndex}`}
+                          className="h-8 rounded-md border border-gray-100"
+                          style={{
+                            background: fillPercent > 0
+                              ? `linear-gradient(to top, ${fillColor} 0%, ${fillColor} ${fillPercent}%, #e5e7eb ${fillPercent}%, #e5e7eb 100%)`
+                              : '#e5e7eb',
+                          }}
+                          title={title}
+                        />
+                      );
+                    })}
+                  </div>
+                ))}
               </div>
             </div>
           </div>
