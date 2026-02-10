@@ -161,7 +161,10 @@ async function checkIntervalNotification(notification, now) {
       .from('activities')
       .select('*')
       .eq('baby_id', baby.id)
-      .eq('activity_type', notification.activity_type)
+      // В таблице activities тип активности хранится в колонке `type`.
+      // Из-за фильтра по несуществующей `activity_type` lastActivity всегда был null,
+      // и interval-уведомления никогда не отправлялись.
+      .eq('type', notification.activity_type)
       .order('start_time', { ascending: false })
       .limit(1)
       .maybeSingle();
