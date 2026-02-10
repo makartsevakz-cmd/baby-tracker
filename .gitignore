@@ -6,3 +6,4 @@ android/key.properties
 android/google-services.json
 notification-server/firebase-admin-key.json
 my-release-key.keystore
+firebase-admin-key.json
