@@ -78,7 +78,11 @@ const ActivityTracker = () => {
   };
 
   const getTimerDuration = (startTime, pausedDuration = 0) => {
-    const diff = Date.now() - startTime + pausedDuration;
+    const parsedStartTime = Number(startTime);
+    const parsedPausedDuration = Number(pausedDuration) || 0;
+    const diff = Number.isFinite(parsedStartTime)
+      ? Math.max(0, Date.now() - parsedStartTime + parsedPausedDuration)
+      : Math.max(0, parsedPausedDuration);
     const hours = Math.floor(diff / 3600000);
     const minutes = Math.floor((diff % 3600000) / 60000);
     const seconds = Math.floor((diff % 60000) / 1000);
@@ -260,10 +264,18 @@ const ActivityTracker = () => {
   }, [view, tg]);
 
   const getTotalDuration = (timerType) => {
-    if (timers[timerType]) {
-      return Math.floor((Date.now() - timers[timerType]) / 1000);
+    const activeTimerStart = Number(timers[timerType]);
+    const pausedDuration = Number(pausedTimers[timerType]);
+
+    if (Number.isFinite(activeTimerStart)) {
+      return Math.floor(Math.max(0, Date.now() - activeTimerStart) / 1000);
     }
-    return Math.floor((pausedTimers[timerType] || 0) / 1000);
+
+    if (Number.isFinite(pausedDuration)) {
+      return Math.floor(Math.max(0, pausedDuration) / 1000);
+    }
+
+    return 0;
   };
 
   const resetTimer = (timerType) => {
@@ -333,11 +345,13 @@ const ActivityTracker = () => {
     if (formData.type === 'breastfeeding') {
       let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : (editingId ? 0 : getTotalDuration('left'));
       let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : (editingId ? 0 : getTotalDuration('right'));
-      const totalDuration = leftDuration + rightDuration;
+      const leftRoundedMinutes = Math.round(leftDuration / 60);
+      const rightRoundedMinutes = Math.round(rightDuration / 60);
+      const totalDuration = (leftRoundedMinutes + rightRoundedMinutes) * 60;
       const breastfeedingStartTime = timerMeta.breastfeedingStartTime || formData.startTime;
 
-      activityData.leftDuration = leftDuration;
-      activityData.rightDuration = rightDuration;
+      activityData.leftDuration = leftRoundedMinutes * 60;
+      activityData.rightDuration = rightRoundedMinutes * 60;
       activityData.startTime = breastfeedingStartTime;
       activityData.endTime = new Date(new Date(breastfeedingStartTime).getTime() + totalDuration * 1000).toISOString();
       
@@ -353,7 +367,8 @@ const ActivityTracker = () => {
       }
     } else if (formData.type === 'sleep' || formData.type === 'walk') {
       const timerKey = formData.type;
-      if (!editingId && (timers[timerKey] || pausedTimers[timerKey])) {
+      const isTimerMode = formData.timeInputMode === 'timer';
+      if (!editingId && isTimerMode && (timers[timerKey] || pausedTimers[timerKey])) {
         const duration = getTotalDuration(timerKey);
         const timerStartTime = timerMeta[`${timerKey}StartTime`] || formData.startTime;
         activityData.startTime = timerStartTime;
@@ -621,7 +636,11 @@ const ActivityTracker = () => {
     } else if (type === 'medicine') {
       setFormData({ ...baseData, medicineName: '' });
     } else {
-      setFormData(baseData);
+      setFormData(
+        (type === 'sleep' || type === 'walk')
+          ? { ...baseData, endTime: '', timeInputMode: null }
+          : baseData
+      );
     }
     
     setView('add');
@@ -668,10 +687,13 @@ const ActivityTracker = () => {
         manualRightMinutes: ''
       });
     } else {
+      const hasTimerData = Boolean(timers[type] || pausedTimers[type]);
       setFormData({ 
         type, 
         startTime,
-        comment: '' 
+        endTime: '',
+        comment: '',
+        timeInputMode: hasTimerData ? 'timer' : null,
       });
     }
     
@@ -877,21 +899,20 @@ const ActivityTracker = () => {
 
     if (activityType === 'breastfeeding' && (timerType === 'left' || timerType === 'right')) {
       const otherSide = timerType === 'left' ? 'right' : 'left';
+      const nextTimers = { ...timers };
+      const nextPausedTimers = { ...pausedTimers };
 
-      setTimers(prev => {
-        const updatedTimers = { ...prev };
+      if (nextTimers[otherSide]) {
+        const otherStartedAt = Number(nextTimers[otherSide]);
+        nextPausedTimers[otherSide] = Number.isFinite(otherStartedAt) ? Math.max(0, now - otherStartedAt) : 0;
+        delete nextTimers[otherSide];
+      }
 
-        if (updatedTimers[otherSide]) {
-          setPausedTimers(prevPaused => ({
-            ...prevPaused,
-            [otherSide]: now - updatedTimers[otherSide]
-          }));
-          delete updatedTimers[otherSide];
-        }
+      const ownPausedDuration = Number(nextPausedTimers[key]);
+      nextTimers[key] = now - (Number.isFinite(ownPausedDuration) ? ownPausedDuration : 0);
 
-        updatedTimers[key] = now - (pausedTimers[key] || 0);
-        return updatedTimers;
-      });
+      setPausedTimers(nextPausedTimers);
+      setTimers(nextTimers);
 
       setTimerMeta(prev => ({
         ...prev,
@@ -901,11 +922,20 @@ const ActivityTracker = () => {
       return;
     }
 
-    setTimers(prev => ({ ...prev, [key]: now - (pausedTimers[key] || 0) }));
+    const pausedDuration = Number(pausedTimers[key]);
+    setTimers(prev => ({ ...prev, [key]: now - (Number.isFinite(pausedDuration) ? pausedDuration : 0) }));
     setTimerMeta(prev => ({
       ...prev,
-      [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (pausedTimers[key] || 0)).toISOString()
+      [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (Number.isFinite(pausedDuration) ? pausedDuration : 0)).toISOString()
     }));
+
+    if (activityType === 'sleep' || activityType === 'walk') {
+      setFormData(prev => ({
+        ...prev,
+        timeInputMode: 'timer',
+        endTime: '',
+      }));
+    }
   };
 
   const pauseTimer = (timerType, activityType) => {
@@ -919,6 +949,18 @@ const ActivityTracker = () => {
         return newTimers;
       });
     }
+  };
+
+  const handleSleepWalkManualChange = (field, value) => {
+    if (timers[selectedActivity] || pausedTimers[selectedActivity]) {
+      resetTimer(selectedActivity);
+    }
+
+    setFormData(prev => ({
+      ...prev,
+      [field]: value,
+      timeInputMode: 'manual',
+    }));
   };
 
   if (isLoading) {
@@ -1067,14 +1109,23 @@ const ActivityTracker = () => {
 
               {(selectedActivity === 'sleep' || selectedActivity === 'walk') && (
                 <div className="space-y-4">
+                  {(() => {
+                    const isTimerMode = formData.timeInputMode === 'timer';
+                    const isManualMode = formData.timeInputMode === 'manual';
+
+                    return (
+                      <>
                   {!editingId && (
                     <div className="border-2 border-indigo-200 rounded-lg p-4">
                       <div className="text-2xl font-mono text-center mb-3">
                         {timers[selectedActivity] ? getTimerDuration(timers[selectedActivity], pausedTimers[selectedActivity]) : formatSeconds(getTotalDuration(selectedActivity))}
                       </div>
-                      <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'}`}>
+                      <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} disabled={isManualMode && !timers[selectedActivity]} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'} ${(isManualMode && !timers[selectedActivity]) ? 'opacity-50 cursor-not-allowed' : ''}`}>
                         {timers[selectedActivity] ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер</>}
                       </button>
+                      {isManualMode && !timers[selectedActivity] && (
+                        <div className="text-xs text-center text-gray-500 mt-2">Таймер недоступен при ручном вводе времени</div>
+                      )}
                     </div>
                   )}
                   
@@ -1082,12 +1133,15 @@ const ActivityTracker = () => {
                   
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
-                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={toLocalDateTimeString(formData.startTime)} onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))} />
+                    <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.startTime)} onChange={(e) => handleSleepWalkManualChange('startTime', fromLocalDateTimeString(e.target.value))} />
                   </div>
                   <div>
                     <label className="block mb-2 font-medium">Время окончания:</label>
-                    <input type="datetime-local" className="w-full border-2 border-gray-200 rounded-lg p-3" value={toLocalDateTimeString(formData.endTime)} onChange={(e) => setFormData(prev => ({ ...prev, endTime: fromLocalDateTimeString(e.target.value) }))} />
+                    <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.endTime)} onChange={(e) => handleSleepWalkManualChange('endTime', fromLocalDateTimeString(e.target.value))} />
                   </div>
+                    </>
+                    );
+                  })()}
                 </div>
               )}
 
