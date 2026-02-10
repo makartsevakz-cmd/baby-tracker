@@ -13,6 +13,9 @@ export const isSupabaseConfigured =
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const buildTelegramEmail = (telegramUserId) => `telegram_${telegramUserId}@temp.com`;
+const buildTelegramPassword = (telegramUserId) => `telegram_${telegramUserId}_auth`;
+
 // Authentication helpers
 export const authHelpers = {
   // Sign in with Telegram user data
@@ -20,8 +23,8 @@ export const authHelpers = {
   try {
     // Use Telegram user ID as unique identifier
     const { data, error } = await supabase.auth.signInWithPassword({
-      email: `telegram_${telegramUser.id}@temp.com`,
-      password: `telegram_${telegramUser.id}_${telegramUser.auth_date}`,
+      email: buildTelegramEmail(telegramUser.id),
+      password: buildTelegramPassword(telegramUser.id),
     });
 
     if (error && error.message.includes('Invalid login credentials')) {
@@ -62,8 +65,8 @@ export const authHelpers = {
   async signUpWithTelegram(telegramUser) {
     try {
       const { data, error } = await supabase.auth.signUp({
-        email: `telegram_${telegramUser.id}@temp.com`,
-        password: `telegram_${telegramUser.id}_${telegramUser.auth_date}`,
+        email: buildTelegramEmail(telegramUser.id),
+        password: buildTelegramPassword(telegramUser.id),
         options: {
           data: {
             telegram_id: telegramUser.id,
@@ -78,9 +81,44 @@ export const authHelpers = {
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
+      if (error?.message?.includes('User already registered')) {
+        return {
+          data: null,
+          error: new Error('Пользователь уже существует, но пароль Telegram-аккаунта устарел. Нужно сбросить пароль в Supabase для этого пользователя.'),
+        };
+      }
+
       console.error('Sign up error:', error);
       return { data: null, error };
     }
+  },
+
+  async signInAnonymously() {
+    const { data, error } = await supabase.auth.signInAnonymously();
+    return { data, error };
+  },
+
+  async ensureAuthenticatedSession({ telegramUser } = {}) {
+    if (telegramUser) {
+      const signInResult = await this.signInWithTelegram(telegramUser);
+      if (signInResult.error) {
+        return { user: null, mode: 'telegram', error: signInResult.error };
+      }
+
+      return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
+    }
+
+    const existingUser = await this.getCurrentUser();
+    if (existingUser) {
+      return { user: existingUser, mode: 'session', error: null };
+    }
+
+    const { data, error } = await this.signInAnonymously();
+    if (error) {
+      return { user: null, mode: 'anonymous', error };
+    }
+
+    return { user: data?.user ?? data?.session?.user ?? null, mode: 'anonymous', error: null };
   },
 
   async getCurrentUser() {
