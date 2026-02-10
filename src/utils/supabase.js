@@ -15,6 +15,17 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const buildTelegramEmail = (telegramUserId) => `telegram_${telegramUserId}@temp.com`;
 const buildTelegramPassword = (telegramUserId) => `telegram_${telegramUserId}_auth`;
+const isInvalidCredentialsError = (error) =>
+  Boolean(
+    error &&
+    (error.message?.includes('Invalid login credentials') || error.code === 'invalid_credentials')
+  );
+
+const isUserAlreadyExistsError = (error) =>
+  Boolean(
+    error &&
+    (error.message?.includes('User already registered') || error.code === 'user_already_exists')
+  );
 
 // Authentication helpers
 export const authHelpers = {
@@ -27,7 +38,7 @@ export const authHelpers = {
       password: buildTelegramPassword(telegramUser.id),
     });
 
-    if (error && error.message.includes('Invalid login credentials')) {
+    if (isInvalidCredentialsError(error)) {
       // User doesn't exist, create account
       return await this.signUpWithTelegram(telegramUser);
     }
@@ -81,10 +92,10 @@ export const authHelpers = {
       if (error) throw error;
       return { data, error: null };
     } catch (error) {
-      if (error?.message?.includes('User already registered')) {
+      if (isUserAlreadyExistsError(error)) {
         return {
           data: null,
-          error: new Error('Пользователь уже существует, но пароль Telegram-аккаунта устарел. Нужно сбросить пароль в Supabase для этого пользователя.'),
+          error: new Error('Пользователь уже существует, но пароль Telegram-аккаунта устарел.'),
         };
       }
 
@@ -101,11 +112,29 @@ export const authHelpers = {
   async ensureAuthenticatedSession({ telegramUser } = {}) {
     if (telegramUser) {
       const signInResult = await this.signInWithTelegram(telegramUser);
-      if (signInResult.error) {
+      if (!signInResult.error) {
+        return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
+      }
+
+      // Fallback to anonymous session instead of local cache when Telegram auth fails.
+      // This keeps data operations in Supabase and avoids switching to local-only mode.
+      console.warn('Telegram auth failed, switching to anonymous Supabase session:', signInResult.error);
+
+      const existingUser = await this.getCurrentUser();
+      if (existingUser) {
+        return { user: existingUser, mode: 'session', error: null };
+      }
+
+      const anonymousResult = await this.signInAnonymously();
+      if (anonymousResult.error) {
         return { user: null, mode: 'telegram', error: signInResult.error };
       }
 
-      return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
+      return {
+        user: anonymousResult.data?.user ?? anonymousResult.data?.session?.user ?? null,
+        mode: 'anonymous_after_telegram_error',
+        error: null,
+      };
     }
 
     const existingUser = await this.getCurrentUser();
