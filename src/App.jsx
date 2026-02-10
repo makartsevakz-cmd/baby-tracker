@@ -936,22 +936,37 @@ const ActivityTracker = () => {
     });
   }, [tg]);
 
-  const calculateAge = useCallback(() => {
-    if (!babyProfile.birthDate) return '';
-    const birth = new Date(babyProfile.birthDate);
+  const calculateAge = useCallback((birthDateValue = babyProfile.birthDate) => {
+    if (!birthDateValue) return '';
+
+    const [year, month, day] = birthDateValue.split('-').map(Number);
+    const birth = new Date(year, (month || 1) - 1, day || 1);
     const now = new Date();
-    const months = (now.getFullYear() - birth.getFullYear()) * 12 + (now.getMonth() - birth.getMonth());
-    const days = Math.floor((now - birth) / (1000 * 60 * 60 * 24));
-    
-    if (months < 1) {
-      return `${days} дн.`;
-    } else if (months < 12) {
-      return `${months} мес.`;
-    } else {
-      const years = Math.floor(months / 12);
-      const remainingMonths = months % 12;
-      return remainingMonths > 0 ? `${years} г. ${remainingMonths} мес.` : `${years} г.`;
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    if (birth > today) return '0 дн.';
+
+    let years = today.getFullYear() - birth.getFullYear();
+    let months = today.getMonth() - birth.getMonth();
+    let days = today.getDate() - birth.getDate();
+
+    if (days < 0) {
+      const prevMonthLastDay = new Date(today.getFullYear(), today.getMonth(), 0).getDate();
+      days += prevMonthLastDay;
+      months -= 1;
     }
+
+    if (months < 0) {
+      months += 12;
+      years -= 1;
+    }
+
+    const parts = [];
+    if (years > 0) parts.push(`${years} г.`);
+    if (months > 0) parts.push(`${months} мес.`);
+    if (days > 0 || parts.length === 0) parts.push(`${days} дн.`);
+
+    return parts.join(' ');
   }, [babyProfile.birthDate]);
 
   const startTimer = (timerType, activityType) => {
@@ -1387,7 +1402,7 @@ const ActivityTracker = () => {
                 />
                 {profileForm.birthDate && (
                   <div className="mt-2 text-sm text-gray-600">
-                    Возраст: {calculateAge()}
+                    Возраст: {calculateAge(profileForm.birthDate)}
                   </div>
                 )}
               </div>
@@ -1756,7 +1771,23 @@ const ActivityTracker = () => {
         }
       });
 
-      return stats;
+      return Object.fromEntries(
+        Object.entries(stats).map(([type, data]) => [
+          type,
+          {
+            ...data,
+            avgCountPerDay: data.count / 7,
+            avgDurationPerDay: data.totalDuration / 7,
+          },
+        ])
+      );
+    };
+
+    const formatAverageCount = (value) => {
+      const rounded = Math.round(value * 10) / 10;
+      return Number.isInteger(rounded)
+        ? `${rounded}`
+        : rounded.toFixed(1).replace('.', ',');
     };
 
     const weekStats = getWeekStats();
@@ -1869,7 +1900,7 @@ const ActivityTracker = () => {
               <div className="space-y-3">
                 {Object.entries(weekStats).map(([type, data]) => {
                   const ActivityIcon = activityTypes[type]?.icon;
-                  const duration = formatDuration(0, data.totalDuration);
+                  const duration = formatDuration(0, data.avgDurationPerDay);
                   return (
                     <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
                       <div className="flex items-center justify-between">
@@ -1878,10 +1909,10 @@ const ActivityTracker = () => {
                           <span className="font-semibold">{activityTypes[type]?.label}</span>
                         </div>
                         <div className="text-right">
-                          <div className="font-semibold">{data.count} раз</div>
+                          <div className="font-semibold">{formatAverageCount(data.avgCountPerDay)} раз/день</div>
                           {duration && (
                             <div className="text-sm opacity-75">
-                              {duration}
+                              {duration}/день
                             </div>
                           )}
                         </div>
