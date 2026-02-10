@@ -1,6 +1,7 @@
 // src/components/NotificationsView.jsx
 import React, { useState, useEffect } from 'react';
 import { Bell, Plus, Edit2, Trash2, Clock, Calendar, RefreshCw, ArrowLeft, X } from 'lucide-react';
+import cacheService, { CACHE_TTL_SECONDS } from '../services/cacheService.js';
 
 const NotificationsView = ({ 
   tg, 
@@ -43,10 +44,9 @@ const NotificationsView = ({
         console.error('Load notifications error:', error);
       }
     } else {
-      // Load from localStorage
-      const saved = localStorage.getItem('notifications');
+      const saved = await cacheService.get('notifications');
       if (saved) {
-        setNotifications(JSON.parse(saved));
+        setNotifications(saved);
       }
     }
   };
@@ -123,15 +123,15 @@ const NotificationsView = ({
           setNotifications(prev => [data, ...prev]);
         }
       } else {
-        // Fallback to localStorage
+        // Fallback to cache
         if (editingId) {
           const updatedNotifications = notifications.map(n => n.id === editingId ? notificationData : n);
           setNotifications(updatedNotifications);
-          localStorage.setItem('notifications', JSON.stringify(updatedNotifications));
+          await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
         } else {
           const updatedNotifications = [notificationData, ...notifications];
           setNotifications(updatedNotifications);
-          localStorage.setItem('notifications', JSON.stringify(updatedNotifications));
+          await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
         }
       }
     } catch (error) {
@@ -154,7 +154,7 @@ const NotificationsView = ({
         const { error } = await notificationHelpers.deleteNotification(id);
         if (error) throw error;
       } else {
-        localStorage.setItem('notifications', JSON.stringify(notifications.filter(n => n.id !== id)));
+        await cacheService.set('notifications', notifications.filter(n => n.id !== id), CACHE_TTL_SECONDS);
       }
       setNotifications(prev => prev.filter(n => n.id !== id));
     } catch (error) {
@@ -172,8 +172,9 @@ const NotificationsView = ({
         if (error) throw error;
         setNotifications(prev => prev.map(n => n.id === id ? data : n));
       } else {
-        setNotifications(prev => prev.map(n => n.id === id ? { ...n, enabled } : n));
-        localStorage.setItem('notifications', JSON.stringify(notifications));
+        const updatedNotifications = notifications.map(n => n.id === id ? { ...n, enabled } : n);
+        setNotifications(updatedNotifications);
+        await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
       }
     } catch (error) {
       console.error('Toggle notification error:', error);

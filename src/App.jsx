@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
+import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 
 const ActivityTracker = () => {
@@ -201,15 +202,33 @@ const ActivityTracker = () => {
     };
   };
 
+  const loadFromCache = useCallback(async () => {
+    const [savedActivities, savedTimers, savedPaused, savedTimerMeta, savedProfile, savedGrowth] = await Promise.all([
+      cacheService.get('baby_activities'),
+      cacheService.get('active_timers'),
+      cacheService.get('paused_timers'),
+      cacheService.get('timer_meta'),
+      cacheService.get('baby_profile'),
+      cacheService.get('growth_data')
+    ]);
+
+    if (savedActivities) setActivities(savedActivities);
+    if (savedTimers) setTimers(savedTimers);
+    if (savedPaused) setPausedTimers(savedPaused);
+    if (savedTimerMeta) setTimerMeta(savedTimerMeta);
+    if (savedProfile) setBabyProfile(savedProfile);
+    if (savedGrowth) setGrowthData(savedGrowth);
+  }, []);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setAuthError(null);
     
     // Set a timeout to prevent infinite loading
     const loadTimeout = setTimeout(() => {
-      console.warn('Load timeout - falling back to localStorage');
+      console.warn('Load timeout - using cache fallback');
       setAuthError('Превышено время ожидания');
-      loadFromLocalStorage();
+      void loadFromCache();
       setIsLoading(false);
     }, 10000); // 10 seconds timeout
     
@@ -228,8 +247,8 @@ const ActivityTracker = () => {
 
           if (error) {
             console.error('Auth error:', error);
-            setAuthError('Ошибка аутентификации - используется localStorage');
-            loadFromLocalStorage();
+            setAuthError('Ошибка аутентификации - используется кеш');
+            await loadFromCache();
             clearTimeout(loadTimeout);
             setIsLoading(false);
             return;
@@ -265,48 +284,34 @@ const ActivityTracker = () => {
             console.error('Initial data load error:', err);
           }
 
-          // Load timers from localStorage (they're temporary, not in DB)
-          const savedTimers = localStorage.getItem('active_timers');
-          const savedPaused = localStorage.getItem('paused_timers');
-          const savedTimerMeta = localStorage.getItem('timer_meta');
-          if (savedTimers) setTimers(JSON.parse(savedTimers));
-          if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
-          if (savedTimerMeta) setTimerMeta(JSON.parse(savedTimerMeta));
+          // Load timers from cache (temporary data)
+          const [savedTimers, savedPaused, savedTimerMeta] = await Promise.all([
+            cacheService.get('active_timers'),
+            cacheService.get('paused_timers'),
+            cacheService.get('timer_meta')
+          ]);
+          if (savedTimers) setTimers(savedTimers);
+          if (savedPaused) setPausedTimers(savedPaused);
+          if (savedTimerMeta) setTimerMeta(savedTimerMeta);
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
-          setAuthError('Supabase недоступен - используется localStorage');
-          loadFromLocalStorage();
+          setAuthError('Supabase недоступен - используется кеш');
+          await loadFromCache();
         }
       } else {
-        // Not in Telegram or Supabase not configured, use localStorage
-        console.log('Using localStorage (no Telegram or Supabase config)');
-        loadFromLocalStorage();
+        // Not in Telegram or Supabase not configured, use cache
+        console.log('Using cache fallback (no Telegram or Supabase config)');
+        await loadFromCache();
       }
     } catch (error) {
       console.error('Load data error:', error);
       setAuthError('Ошибка загрузки данных');
-      loadFromLocalStorage();
+      await loadFromCache();
     } finally {
       clearTimeout(loadTimeout);
       setIsLoading(false);
     }
-  }, []);
-
-  const loadFromLocalStorage = () => {
-    const savedActivities = localStorage.getItem('baby_activities');
-    const savedTimers = localStorage.getItem('active_timers');
-    const savedPaused = localStorage.getItem('paused_timers');
-    const savedTimerMeta = localStorage.getItem('timer_meta');
-    const savedProfile = localStorage.getItem('baby_profile');
-    const savedGrowth = localStorage.getItem('growth_data');
-    
-    if (savedActivities) setActivities(JSON.parse(savedActivities));
-    if (savedTimers) setTimers(JSON.parse(savedTimers));
-    if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
-    if (savedTimerMeta) setTimerMeta(JSON.parse(savedTimerMeta));
-    if (savedProfile) setBabyProfile(JSON.parse(savedProfile));
-    if (savedGrowth) setGrowthData(JSON.parse(savedGrowth));
-  };
+  }, [loadFromCache]);
 
   const getActivityChronologyTime = useCallback((activity) => {
     if (!activity) return 0;
@@ -487,15 +492,15 @@ const ActivityTracker = () => {
           setActivities(prev => [convertFromSupabaseActivity(data), ...prev]);
         }
       } else {
-        // Fallback to local storage
+        // Fallback to cache
         if (editingId) {
           const updatedActivities = activities.map(a => a.id === editingId ? activityData : a);
           setActivities(updatedActivities);
-          localStorage.setItem('baby_activities', JSON.stringify(updatedActivities));
+          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
         } else {
           const updatedActivities = [activityData, ...activities];
           setActivities(updatedActivities);
-          localStorage.setItem('baby_activities', JSON.stringify(updatedActivities));
+          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
         }
       }
     } catch (error) {
@@ -521,7 +526,7 @@ const ActivityTracker = () => {
           const { error } = await supabaseModule.activityHelpers.deleteActivity(id);
           if (error) throw error;
         } else {
-          localStorage.setItem('baby_activities', JSON.stringify(activities.filter(a => a.id !== id)));
+          await cacheService.set('baby_activities', activities.filter(a => a.id !== id), CACHE_TTL_SECONDS);
         }
         setActivities(prev => prev.filter(a => a.id !== id));
       } catch (error) {
@@ -637,10 +642,12 @@ const ActivityTracker = () => {
 
   useEffect(() => {
     if (!isLoading) {
-      // Only save timers to localStorage (they're temporary)
-      localStorage.setItem('active_timers', JSON.stringify(timers));
-      localStorage.setItem('paused_timers', JSON.stringify(pausedTimers));
-      localStorage.setItem('timer_meta', JSON.stringify(timerMeta));
+      // Save timers to cache with 1-hour TTL
+      void Promise.all([
+        cacheService.set('active_timers', timers, CACHE_TTL_SECONDS),
+        cacheService.set('paused_timers', pausedTimers, CACHE_TTL_SECONDS),
+        cacheService.set('timer_meta', timerMeta, CACHE_TTL_SECONDS),
+      ]);
     }
   }, [timers, pausedTimers, timerMeta, isLoading]);
 
@@ -880,7 +887,7 @@ const ActivityTracker = () => {
         });
       } else {
         setBabyProfile(profileForm);
-        localStorage.setItem('baby_profile', JSON.stringify(profileForm));
+        await cacheService.set('baby_profile', profileForm, CACHE_TTL_SECONDS);
       }
       setView('main');
     } catch (error) {
@@ -928,11 +935,11 @@ const ActivityTracker = () => {
         if (editingGrowthId) {
           const updatedGrowthData = growthData.map(r => r.id === editingGrowthId ? record : r);
           setGrowthData(updatedGrowthData);
-          localStorage.setItem('growth_data', JSON.stringify(updatedGrowthData));
+          await cacheService.set('growth_data', updatedGrowthData, CACHE_TTL_SECONDS);
         } else {
           const updatedGrowthData = [...growthData, record].sort((a, b) => new Date(a.date) - new Date(b.date));
           setGrowthData(updatedGrowthData);
-          localStorage.setItem('growth_data', JSON.stringify(updatedGrowthData));
+          await cacheService.set('growth_data', updatedGrowthData, CACHE_TTL_SECONDS);
         }
       }
       
@@ -955,7 +962,7 @@ const ActivityTracker = () => {
           const { error } = await supabaseModule.growthHelpers.deleteRecord(id);
           if (error) throw error;
         } else {
-          localStorage.setItem('growth_data', JSON.stringify(growthData.filter(r => r.id !== id)));
+          await cacheService.set('growth_data', growthData.filter(r => r.id !== id), CACHE_TTL_SECONDS);
         }
         
         setGrowthData(prev => prev.filter(r => r.id !== id));
