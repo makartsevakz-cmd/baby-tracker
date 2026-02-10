@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
-import * as notificationsModule from './utils/notifications.js';
-import NotificationsView from './components/NotificationsView.jsx';
+const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -30,6 +29,7 @@ const ActivityTracker = () => {
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
   const [isSavingProfile, setIsSavingProfile] = useState(false); // Profile save state
   const [isSavingGrowth, setIsSavingGrowth] = useState(false); // Growth save state
+  const [notificationHelpers, setNotificationHelpers] = useState(null);
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -156,14 +156,17 @@ const ActivityTracker = () => {
     
     try {
       // Check if we're in Telegram and if Supabase is configured
-      const hasSupabase = supabaseModule.authHelpers && typeof supabaseModule.authHelpers.signInWithTelegram === 'function';
-      
+      const hasSupabase =
+        supabaseModule.isSupabaseConfigured &&
+        supabaseModule.authHelpers &&
+        typeof supabaseModule.authHelpers.signInWithTelegram === 'function';
+
       if (hasSupabase && window.Telegram?.WebApp?.initDataUnsafe?.user) {
         const telegramUser = window.Telegram.WebApp.initDataUnsafe.user;
-        
+
         try {
-          const { data, error } = await supabaseModule.authHelpers.signInWithTelegram(telegramUser);
-          
+          const { error } = await supabaseModule.authHelpers.signInWithTelegram(telegramUser);
+
           if (error) {
             console.error('Auth error:', error);
             setAuthError('Ошибка аутентификации - используется localStorage');
@@ -172,43 +175,37 @@ const ActivityTracker = () => {
             setIsLoading(false);
             return;
           }
-          
+
           setIsAuthenticated(true);
-          
-          // Load baby profile
+
           try {
-            const profileResult = await supabaseModule.babyHelpers.getProfile();
-            if (profileResult.data) {
+            const initialData = supabaseModule.appDataHelpers
+              ? await supabaseModule.appDataHelpers.getInitialData()
+              : {
+                  profile: await supabaseModule.babyHelpers.getProfile(),
+                  activities: await supabaseModule.activityHelpers.getActivities(),
+                  growth: await supabaseModule.growthHelpers.getRecords(),
+                };
+
+            if (initialData.profile?.data) {
               setBabyProfile({
-                name: profileResult.data.name || '',
-                birthDate: profileResult.data.birth_date || '',
-                photo: profileResult.data.photo_url || null,
+                name: initialData.profile.data.name || '',
+                birthDate: initialData.profile.data.birth_date || '',
+                photo: initialData.profile.data.photo_url || null,
               });
             }
-          } catch (err) {
-            console.error('Profile load error:', err);
-          }
-          
-          // Load activities
-          try {
-            const activitiesResult = await supabaseModule.activityHelpers.getActivities();
-            if (activitiesResult.data) {
-              setActivities(activitiesResult.data.map(convertFromSupabaseActivity));
+
+            if (initialData.activities?.data) {
+              setActivities(initialData.activities.data.map(convertFromSupabaseActivity));
+            }
+
+            if (initialData.growth?.data) {
+              setGrowthData(initialData.growth.data.map(convertFromSupabaseGrowth));
             }
           } catch (err) {
-            console.error('Activities load error:', err);
+            console.error('Initial data load error:', err);
           }
-          
-          // Load growth records
-          try {
-            const growthResult = await supabaseModule.growthHelpers.getRecords();
-            if (growthResult.data) {
-              setGrowthData(growthResult.data.map(convertFromSupabaseGrowth));
-            }
-          } catch (err) {
-            console.error('Growth load error:', err);
-          }
-          
+
           // Load timers from localStorage (they're temporary, not in DB)
           const savedTimers = localStorage.getItem('active_timers');
           const savedPaused = localStorage.getItem('paused_timers');
@@ -216,7 +213,6 @@ const ActivityTracker = () => {
           if (savedTimers) setTimers(JSON.parse(savedTimers));
           if (savedPaused) setPausedTimers(JSON.parse(savedPaused));
           if (savedTimerMeta) setTimerMeta(JSON.parse(savedTimerMeta));
-          
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
           setAuthError('Supabase недоступен - используется localStorage');
@@ -224,7 +220,7 @@ const ActivityTracker = () => {
         }
       } else {
         // Not in Telegram or Supabase not configured, use localStorage
-        console.log('Using localStorage (no Telegram or Supabase)');
+        console.log('Using localStorage (no Telegram or Supabase config)');
         loadFromLocalStorage();
       }
     } catch (error) {
@@ -582,6 +578,25 @@ const ActivityTracker = () => {
       setProfileForm(babyProfile);
     }
   }, [view, babyProfile]);
+
+  useEffect(() => {
+    if (view !== 'notifications' || notificationHelpers) return;
+
+    let isMounted = true;
+    import('./utils/notifications.js')
+      .then((module) => {
+        if (isMounted) {
+          setNotificationHelpers(() => module.notificationHelpers);
+        }
+      })
+      .catch((error) => {
+        console.error('Failed to load notification helpers:', error);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [view, notificationHelpers]);
 
   // Set up real-time subscriptions
   useEffect(() => {
@@ -1875,16 +1890,18 @@ const ActivityTracker = () => {
 
   if (view === 'notifications') {
     return (
-      <NotificationsView
-        tg={tg}
-        onBack={() => {
-          if (tg) tg.HapticFeedback?.impactOccurred('light');
-          setView('main');
-        }}
-        activityTypes={activityTypes}
-        notificationHelpers={notificationsModule.notificationHelpers}
-        isAuthenticated={isAuthenticated}
-      />
+      <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-500">Загрузка уведомлений...</div>}>
+        <NotificationsView
+          tg={tg}
+          onBack={() => {
+            if (tg) tg.HapticFeedback?.impactOccurred('light');
+            setView('main');
+          }}
+          activityTypes={activityTypes}
+          notificationHelpers={notificationHelpers}
+          isAuthenticated={isAuthenticated}
+        />
+      </Suspense>
     );
   }
 

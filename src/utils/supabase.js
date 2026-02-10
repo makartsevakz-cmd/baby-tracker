@@ -5,6 +5,12 @@ import { createClient } from '@supabase/supabase-js';
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'YOUR_SUPABASE_URL';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
 
+export const isSupabaseConfigured =
+  Boolean(SUPABASE_URL) &&
+  Boolean(SUPABASE_ANON_KEY) &&
+  SUPABASE_URL !== 'YOUR_SUPABASE_URL' &&
+  SUPABASE_ANON_KEY !== 'YOUR_SUPABASE_ANON_KEY';
+
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Authentication helpers
@@ -312,4 +318,41 @@ export const subscribeToGrowthRecords = (callback) => {
       callback
     )
     .subscribe();
+};
+
+// Optimized initial dashboard loading to avoid duplicated profile queries
+export const appDataHelpers = {
+  async getInitialData(limit = 100) {
+    const profileResult = await babyHelpers.getProfile();
+
+    if (!profileResult.data) {
+      return {
+        profile: profileResult,
+        activities: { data: [], error: null },
+        growth: { data: [], error: null },
+      };
+    }
+
+    const babyId = profileResult.data.id;
+
+    const [activities, growth] = await Promise.all([
+      supabase
+        .from('activities')
+        .select('*')
+        .eq('baby_id', babyId)
+        .order('start_time', { ascending: false })
+        .limit(limit),
+      supabase
+        .from('growth_records')
+        .select('*')
+        .eq('baby_id', babyId)
+        .order('measurement_date', { ascending: true }),
+    ]);
+
+    return {
+      profile: profileResult,
+      activities,
+      growth,
+    };
+  },
 };
