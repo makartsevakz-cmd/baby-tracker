@@ -73,6 +73,7 @@ async function checkAndSendNotifications() {
         
         let shouldSend = false;
         let notificationMessage = '';
+        let intervalWindow = null;
         
         // Проверить time-based уведомления
         if (notification.notification_type === 'time') {
@@ -87,6 +88,7 @@ async function checkAndSendNotifications() {
         if (notification.notification_type === 'interval') {
           const result = await checkIntervalNotification(notification, now);
           shouldSend = result.shouldSend;
+          intervalWindow = result.intervalWindow ?? null;
           if (shouldSend) {
             notificationMessage = notification.message || 
               `⏰ Прошло ${formatInterval(notification.interval_minutes)} с последней активности: ${getActivityLabel(notification.activity_type)}`;
@@ -95,15 +97,20 @@ async function checkAndSendNotifications() {
         
         // Отправить уведомление если нужно
         if (shouldSend) {
-          // Проверить, не отправляли ли мы это уведомление недавно
-          const notificationKey = `${notification.id}-${now.toISOString().slice(0, 16)}`;
+          // Для interval уведомлений дедуплицируем по окну интервала,
+          // для time уведомлений — по минуте.
+          const isInterval = notification.notification_type === 'interval';
+          const notificationKey = isInterval
+            ? `${notification.id}-interval-${intervalWindow ?? 0}`
+            : `${notification.id}-time-${now.toISOString().slice(0, 16)}`;
+
           if (!sentNotifications.has(notificationKey)) {
             await sendTelegramMessage(telegramId, notificationMessage, notification.title);
             sentNotifications.set(notificationKey, true);
-            
+
             // Очистить старые записи (старше 2 часов)
             cleanupSentNotifications();
-            
+
             console.log(`Notification sent to user ${telegramId}`);
           } else {
             console.log(`Notification already sent: ${notificationKey}`);
@@ -157,20 +164,25 @@ async function checkIntervalNotification(notification, now) {
       .eq('type', notification.activity_type)
       .order('start_time', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
     
     if (!lastActivity) {
       return { shouldSend: false };
     }
-    
+
+    const intervalMinutes = Number(notification.interval_minutes);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+      return { shouldSend: false };
+    }
+
     const lastTime = new Date(lastActivity.end_time || lastActivity.start_time);
     const diffMinutes = (now - lastTime) / (1000 * 60);
-    
-    // Отправить если прошел интервал (с учетом погрешности в 1 минуту)
-    const shouldSend = diffMinutes >= notification.interval_minutes - 1 && 
-                       diffMinutes <= notification.interval_minutes + 1;
-    
-    return { shouldSend };
+
+    // Отправить, когда интервал пройден. Номер окна интервала используем для дедупликации.
+    const shouldSend = diffMinutes >= intervalMinutes;
+    const intervalWindow = shouldSend ? Math.floor(diffMinutes / intervalMinutes) : null;
+
+    return { shouldSend, intervalWindow };
   } catch (error) {
     console.error('Error checking interval notification:', error);
     return { shouldSend: false };
@@ -218,7 +230,9 @@ function getActivityLabel(type) {
     bath: 'Купание',
     walk: 'Прогулка',
     diaper: 'Подгузник',
-    medicine: 'Лекарство'
+    medicine: 'Лекарство',
+    activity: 'Активность',
+    burp: 'Отрыжка'
   };
   return labels[type] || type;
 }
