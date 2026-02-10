@@ -622,30 +622,12 @@ const ActivityTracker = () => {
   useEffect(() => {
     if (!tg) return;
 
-    if (view === 'main') {
-      tg.BackButton.hide();
-      tg.MainButton.hide();
-    } else {
-      tg.BackButton.show();
-      tg.BackButton.onClick(handleBack);
-      
-      if (view === 'add') {
-        // Обновляем текст и состояние кнопки в зависимости от isSaving
-        if (isSaving) {
-          tg.MainButton.setText('Сохранение...');
-          tg.MainButton.showProgress(false); // Показываем прогресс
-          tg.MainButton.disable(); // Блокируем кнопку
-        } else {
-          tg.MainButton.setText(editingId ? 'Обновить' : 'Сохранить');
-          tg.MainButton.hideProgress();
-          tg.MainButton.enable();
-        }
-        tg.MainButton.show();
-        tg.MainButton.onClick(saveActivity);
-      } else {
-        tg.MainButton.hide();
-      }
-    }
+    // Для единообразной навигации используем только web-кнопки внутри UI.
+    // Системные кнопки Telegram скрываем, чтобы не дублировать логику на Android.
+    tg.BackButton.hide();
+    tg.BackButton.offClick(handleBack);
+    tg.MainButton.hide();
+    tg.MainButton.offClick(saveActivity);
 
     return () => {
       tg.BackButton.offClick(handleBack);
@@ -1173,9 +1155,29 @@ const ActivityTracker = () => {
         
         <div className="max-w-2xl mx-auto px-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
-            <div className="flex items-center mb-6">
-              <ActivityIcon className="w-6 h-6 mr-2" />
-              <h2 className="text-xl font-semibold">{activityTypes[selectedActivity].label}</h2>
+            <div className="flex items-center justify-between gap-3 mb-6">
+              <button
+                onClick={handleBack}
+                className="p-2 rounded-lg bg-gray-100 text-gray-700 active:scale-95 transition-transform"
+                title="Назад"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+
+              <div className="flex items-center flex-1 min-w-0">
+                <ActivityIcon className="w-6 h-6 mr-2 shrink-0" />
+                <h2 className="text-xl font-semibold truncate">{activityTypes[selectedActivity].label}</h2>
+              </div>
+
+              <button
+                onClick={saveActivity}
+                disabled={isSaving}
+                className={`px-4 py-2 rounded-lg font-medium text-white transition-all ${
+                  isSaving ? 'bg-purple-300 cursor-not-allowed' : 'bg-purple-600 active:scale-95'
+                }`}
+              >
+                {isSaving ? 'Сохранение...' : (editingId ? 'Обновить' : 'Сохранить')}
+              </button>
             </div>
 
             <div className="space-y-4">
@@ -1436,6 +1438,13 @@ const ActivityTracker = () => {
         <div className="max-w-2xl mx-auto px-4">
           {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
+            <button
+              onClick={handleBack}
+              className="p-2 rounded-lg bg-gray-100 text-gray-700 active:scale-95 transition-transform mr-2"
+              title="Назад"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
             <Baby className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Профиль малыша</h2>
           </div>
@@ -1862,6 +1871,13 @@ const ActivityTracker = () => {
         <div className="max-w-7xl mx-auto px-4">
           {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
+            <button
+              onClick={handleBack}
+              className="p-2 rounded-lg bg-gray-100 text-gray-700 active:scale-95 transition-transform mr-2"
+              title="Назад"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
             <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Статистика</h2>
           </div>
