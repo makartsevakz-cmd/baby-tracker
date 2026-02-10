@@ -189,6 +189,10 @@ export const activityHelpers = {
       activityData.diaper_type = activity.diaperType;
     } else if (activity.type === 'medicine') {
       activityData.medicine_name = activity.medicineName;
+    } else if (activity.type === 'burp') {
+      activityData.food_type = activity.foodType;
+      activityData.diaper_type = activity.diaperType;
+      activityData.medicine_name = activity.medicineName;
     }
 
     const { data, error } = await supabase
@@ -218,6 +222,10 @@ export const activityHelpers = {
     } else if (activity.type === 'diaper') {
       updateData.diaper_type = activity.diaperType;
     } else if (activity.type === 'medicine') {
+      updateData.medicine_name = activity.medicineName;
+    } else if (activity.type === 'burp') {
+      updateData.food_type = activity.foodType;
+      updateData.diaper_type = activity.diaperType;
       updateData.medicine_name = activity.medicineName;
     }
 

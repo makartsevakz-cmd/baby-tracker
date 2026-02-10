@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 
@@ -37,9 +37,15 @@ const ActivityTracker = () => {
     sleep: { icon: Moon, label: 'Сон', color: 'bg-indigo-100 text-indigo-600' },
     bath: { icon: Bath, label: 'Купание', color: 'bg-cyan-100 text-cyan-600' },
     walk: { icon: Wind, label: 'Прогулка', color: 'bg-green-100 text-green-600' },
+    activity: { icon: Activity, label: 'Активность', color: 'bg-orange-100 text-orange-600' },
+    burp: { icon: Undo2, label: 'Отрыжка', color: 'bg-lime-100 text-lime-700' },
     diaper: { icon: Droplets, label: 'Подгузник', color: 'bg-yellow-100 text-yellow-600' },
     medicine: { icon: Pill, label: 'Лекарство', color: 'bg-red-100 text-red-600' },
   };
+
+  const burpColorOptions = ['Белый', 'Жёлтый', 'Зелёный', 'Прозрачный'];
+  const burpConsistencyOptions = ['Жидкая', 'Густая', 'Пенистая'];
+  const burpVolumeOptions = ['less_than_teaspoon', 'more_than_teaspoon'];
 
   const formatTime = (date) => {
     return new Date(date).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -112,6 +118,9 @@ const ActivityTracker = () => {
       amount: dbActivity.amount,
       diaperType: dbActivity.diaper_type,
       medicineName: dbActivity.medicine_name,
+      burpColor: dbActivity.food_type,
+      burpConsistency: dbActivity.diaper_type,
+      burpVolume: dbActivity.medicine_name,
     };
   };
 
@@ -126,7 +135,7 @@ const ActivityTracker = () => {
       leftDuration: activity.leftDuration,
       rightDuration: activity.rightDuration,
       foodType: activity.foodType,
-      amount: activity.amount ? parseInt(activity.amount) : null,
+      amount: activity.type === 'bottle' && activity.amount ? parseInt(activity.amount, 10) : null,
       diaperType: activity.diaperType,
       medicineName: activity.medicineName,
     };
@@ -302,7 +311,7 @@ const ActivityTracker = () => {
       });
     }
 
-    if (timerType === 'sleep' || timerType === 'walk') {
+    if (timerType === 'sleep' || timerType === 'walk' || timerType === 'activity') {
       setTimerMeta(prev => {
         const metaKey = `${timerType}StartTime`;
         if (!prev[metaKey]) return prev;
@@ -328,6 +337,22 @@ const ActivityTracker = () => {
     if (!formData.type || !formData.startTime) {
       if (tg) tg.HapticFeedback?.notificationOccurred('error');
       alert('Пожалуйста, заполните обязательные поля');
+      setIsSaving(false);
+      return;
+    }
+
+    if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') && formData.endTime) {
+      if (new Date(formData.endTime) <= new Date(formData.startTime)) {
+        if (tg) tg.HapticFeedback?.notificationOccurred('error');
+        alert('Время окончания должно быть позже времени начала');
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    if (formData.type === 'burp' && (!formData.burpColor || !formData.burpConsistency || !formData.burpVolume)) {
+      if (tg) tg.HapticFeedback?.notificationOccurred('error');
+      alert('Заполните цвет, консистенцию и объём отрыжки');
       setIsSaving(false);
       return;
     }
@@ -361,7 +386,7 @@ const ActivityTracker = () => {
           return updatedMeta;
         });
       }
-    } else if (formData.type === 'sleep' || formData.type === 'walk') {
+    } else if (formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') {
       const timerKey = formData.type;
       const isTimerMode = formData.timeInputMode === 'timer';
       if (!editingId && isTimerMode && (timers[timerKey] || pausedTimers[timerKey])) {
@@ -375,7 +400,12 @@ const ActivityTracker = () => {
       } else {
         activityData.endTime = new Date().toISOString();
       }
-    } else if (!['bath', 'diaper', 'medicine'].includes(formData.type) && !activityData.endTime) {
+    } else if (formData.type === 'burp') {
+      activityData.endTime = null;
+      activityData.foodType = formData.burpColor;
+      activityData.diaperType = formData.burpConsistency;
+      activityData.medicineName = formData.burpVolume;
+    } else if (!['bath', 'diaper', 'medicine', 'burp'].includes(formData.type) && !activityData.endTime) {
       activityData.endTime = new Date().toISOString();
     }
 
@@ -471,6 +501,14 @@ const ActivityTracker = () => {
         type: 'walk', 
         timers: ['walk'],
         time: getTotalDuration('walk')
+      });
+    }
+
+    if (timers.activity || pausedTimers.activity) {
+      activeTimers.push({
+        type: 'activity',
+        timers: ['activity'],
+        time: getTotalDuration('activity')
       });
     }
     
@@ -648,11 +686,19 @@ const ActivityTracker = () => {
       setFormData({ ...baseData, foodType: 'breast_milk', amount: '' });
     } else if (type === 'diaper') {
       setFormData({ ...baseData, diaperType: 'wet' });
+    } else if (type === 'burp') {
+      setFormData({
+        ...baseData,
+        burpColor: burpColorOptions[0],
+        burpConsistency: burpConsistencyOptions[0],
+        burpVolume: burpVolumeOptions[0],
+        endTime: null,
+      });
     } else if (type === 'medicine') {
       setFormData({ ...baseData, medicineName: '' });
     } else {
       setFormData(
-        (type === 'sleep' || type === 'walk')
+        (type === 'sleep' || type === 'walk' || type === 'activity')
           ? { ...baseData, endTime: '', timeInputMode: null }
           : baseData
       );
@@ -910,7 +956,7 @@ const ActivityTracker = () => {
 
   const startTimer = (timerType, activityType) => {
     if (tg) tg.HapticFeedback?.impactOccurred('medium');
-    const key = activityType === 'sleep' ? 'sleep' : activityType === 'walk' ? 'walk' : timerType;
+    const key = ['sleep', 'walk', 'activity'].includes(activityType) ? activityType : timerType;
     const now = Date.now();
 
     if (activityType === 'breastfeeding' && (timerType === 'left' || timerType === 'right')) {
@@ -952,7 +998,7 @@ const ActivityTracker = () => {
       [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (Number.isFinite(pausedDuration) ? pausedDuration : 0)).toISOString()
     }));
 
-    if (activityType === 'sleep' || activityType === 'walk') {
+    if (activityType === 'sleep' || activityType === 'walk' || activityType === 'activity') {
       setFormData(prev => ({
         ...prev,
         timeInputMode: 'timer',
@@ -963,7 +1009,7 @@ const ActivityTracker = () => {
 
   const pauseTimer = (timerType, activityType) => {
     if (tg) tg.HapticFeedback?.impactOccurred('medium');
-    const key = activityType === 'sleep' ? 'sleep' : activityType === 'walk' ? 'walk' : timerType;
+    const key = ['sleep', 'walk', 'activity'].includes(activityType) ? activityType : timerType;
     if (timers[key]) {
       setPausedTimers(prev => ({ ...prev, [key]: Date.now() - timers[key] }));
       setTimers(prev => {
@@ -1156,7 +1202,7 @@ const ActivityTracker = () => {
                 </div>
               )}
 
-              {(selectedActivity === 'sleep' || selectedActivity === 'walk') && (
+              {(selectedActivity === 'sleep' || selectedActivity === 'walk' || selectedActivity === 'activity') && (
                 <div className="space-y-4">
                   {(() => {
                     const isTimerMode = formData.timeInputMode === 'timer';
@@ -1188,9 +1234,54 @@ const ActivityTracker = () => {
                     <label className="block mb-2 font-medium">Время окончания:</label>
                     <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.endTime)} onChange={(e) => handleSleepWalkManualChange('endTime', fromLocalDateTimeString(e.target.value))} />
                   </div>
+                  {selectedActivity !== 'activity' && formData.startTime && (
+                    <div className="bg-indigo-50 text-indigo-700 rounded-lg p-3 text-sm">
+                      Длительность: {formData.endTime ? (formatDuration(formData.startTime, formData.endTime) || 'меньше 1 минуты') : formatSeconds(getTotalDuration(selectedActivity))}
+                    </div>
+                  )}
                     </>
                     );
                   })()}
+                </div>
+              )}
+
+              {selectedActivity === 'burp' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block mb-2 font-medium">Дата и время:</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Цвет:</label>
+                    <select className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.burpColor || burpColorOptions[0]} onChange={(e) => setFormData(prev => ({ ...prev, burpColor: e.target.value }))}>
+                      {burpColorOptions.map(option => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Консистенция:</label>
+                    <select className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.burpConsistency || burpConsistencyOptions[0]} onChange={(e) => setFormData(prev => ({ ...prev, burpConsistency: e.target.value }))}>
+                      {burpConsistencyOptions.map(option => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Объём:</label>
+                    <div className="grid grid-cols-1 gap-3">
+                      {burpVolumeOptions.map(option => (
+                        <button key={option} onClick={() => setFormData(prev => ({ ...prev, burpVolume: option }))} className={`py-3 rounded-lg border-2 ${formData.burpVolume === option ? 'border-lime-600 bg-lime-50' : 'border-gray-200'}`}>
+                          {option === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               )}
 
@@ -1781,6 +1872,8 @@ const ActivityTracker = () => {
                                                    colorClass.includes('cyan') ? 'bg-cyan-200' :
                                                    colorClass.includes('green') ? 'bg-green-200' :
                                                    colorClass.includes('yellow') ? 'bg-yellow-200' :
+                                                   colorClass.includes('orange') ? 'bg-orange-200' :
+                                                   colorClass.includes('lime') ? 'bg-lime-200' :
                                                    colorClass.includes('red') ? 'bg-red-200' : 'bg-gray-200';
                                     
                                     return (
@@ -2036,12 +2129,22 @@ const ActivityTracker = () => {
                         {activity.type === 'breastfeeding' && (
                           <div className="text-sm opacity-75">Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>
                         )}
-                        {activity.foodType && (
-                          <div className="text-sm opacity-75">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
+                        {activity.type === 'burp' ? (
+                          <>
+                            {activity.burpColor && <div className="text-sm opacity-75">Цвет: {activity.burpColor}</div>}
+                            {activity.burpConsistency && <div className="text-sm opacity-75">Консистенция: {activity.burpConsistency}</div>}
+                            {activity.burpVolume && <div className="text-sm opacity-75">Объём: {activity.burpVolume === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}</div>}
+                          </>
+                        ) : (
+                          <>
+                            {activity.foodType && (
+                              <div className="text-sm opacity-75">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
+                            )}
+                            {activity.amount && <div className="text-sm opacity-75">Количество: {activity.amount} мл</div>}
+                            {activity.diaperType && <div className="text-sm opacity-75">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
+                            {activity.medicineName && <div className="text-sm opacity-75">{activity.medicineName}</div>}
+                          </>
                         )}
-                        {activity.amount && <div className="text-sm opacity-75">Количество: {activity.amount} мл</div>}
-                        {activity.diaperType && <div className="text-sm opacity-75">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
-                        {activity.medicineName && <div className="text-sm opacity-75">{activity.medicineName}</div>}
                         {activity.comment && <div className="text-sm opacity-75 mt-1">{activity.comment}</div>}
                       </div>
                     </div>
