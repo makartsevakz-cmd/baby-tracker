@@ -375,6 +375,376 @@ if (supabase) {
 }
 
 // ============================================
+// Быстрое добавление активностей (FSM + синхронизация с вебом)
+// ============================================
+
+const MAIN_MENU_BUTTON = '➕ Добавить активность';
+const QUICK_ACTIVITIES = {
+  breastfeeding: '🤱 Кормление грудью',
+  bottle: '🍼 Бутылочка',
+  sleep: '😴 Сон',
+  diaper: '👶 Подгузник',
+  medicine: '💊 Лекарство',
+  bath: '🛁 Купание',
+};
+
+const FSM_STATE = {
+  IDLE: 'idle',
+  WAIT_BREAST_SIDE: 'wait_breast_side',
+  WAIT_BOTTLE_AMOUNT: 'wait_bottle_amount',
+  WAIT_DIAPER_TYPE: 'wait_diaper_type',
+  WAIT_MEDICINE_NAME: 'wait_medicine_name',
+  WAIT_STOP_CONFIRM: 'wait_stop_confirm',
+};
+
+const userSessions = new Map();
+const botActiveTimers = new Map();
+const trackedChats = new Set();
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
+}
+
+function getSession(chatId) {
+  if (!userSessions.has(chatId)) {
+    userSessions.set(chatId, { state: FSM_STATE.IDLE, draft: {} });
+  }
+  return userSessions.get(chatId);
+}
+
+function setSessionState(chatId, state, draft = {}) {
+  userSessions.set(chatId, { state, draft });
+}
+
+function getMainMenuKeyboard() {
+  return {
+    keyboard: [[{ text: MAIN_MENU_BUTTON }]],
+    resize_keyboard: true,
+    persistent: true,
+  };
+}
+
+function quickActivitiesKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: QUICK_ACTIVITIES.breastfeeding, callback_data: 'qa:breastfeeding' }],
+      [{ text: QUICK_ACTIVITIES.bottle, callback_data: 'qa:bottle' }],
+      [{ text: QUICK_ACTIVITIES.sleep, callback_data: 'qa:sleep' }],
+      [{ text: QUICK_ACTIVITIES.diaper, callback_data: 'qa:diaper' }],
+      [{ text: QUICK_ACTIVITIES.medicine, callback_data: 'qa:medicine' }],
+      [{ text: QUICK_ACTIVITIES.bath, callback_data: 'qa:bath' }],
+      [{ text: '📊 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+    ],
+  };
+}
+
+function timerKey(timer) {
+  return timer.type === 'breastfeeding' ? `breastfeeding:${timer.side || 'unknown'}` : timer.type;
+}
+
+function toDurationSec(startIso, endIso = new Date().toISOString()) {
+  return Math.max(0, Math.round((new Date(endIso) - new Date(startIso)) / 1000));
+}
+
+function formatTimersForMenu(timers) {
+  if (!timers.length) return 'Активных таймеров нет.';
+  const lines = timers.map((timer) => {
+    const sec = toDurationSec(timer.start_time || timer.startTime);
+    const min = Math.max(1, Math.floor(sec / 60));
+    if (timer.type === 'breastfeeding') {
+      const side = timer.side === 'left' ? 'левая' : 'правая';
+      return `• 🤱 ${side} (${min} мин)`;
+    }
+    if (timer.type === 'sleep') return `• 😴 сон (${min} мин)`;
+    return `• ${timer.type} (${min} мин)`;
+  });
+  return `Активные таймеры:\n${lines.join('\n')}`;
+}
+
+async function resolveAppUserIdByChat(chatId, telegramUserId) {
+  if (!supabase) return null;
+
+  const { data: mapping } = await supabase
+    .from('user_telegram_mapping')
+    .select('user_id')
+    .eq('chat_id', chatId)
+    .maybeSingle();
+
+  if (mapping?.user_id && isUuid(mapping.user_id)) {
+    return mapping.user_id;
+  }
+
+  if (!telegramUserId) return null;
+
+  try {
+    const { data: usersData, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (error) {
+      console.error('Ошибка listUsers:', error);
+      return null;
+    }
+    const user = usersData.users.find((u) => String(u.user_metadata?.telegram_id) === String(telegramUserId));
+    if (!user) return null;
+
+    await supabase
+      .from('user_telegram_mapping')
+      .upsert({ user_id: user.id, chat_id: chatId, updated_at: new Date().toISOString() }, { onConflict: 'chat_id' });
+
+    return user.id;
+  } catch (error) {
+    console.error('Ошибка поиска пользователя по telegram_id:', error);
+    return null;
+  }
+}
+
+async function getBabyIdByUser(userId) {
+  const { data: baby } = await supabase
+    .from('babies')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle();
+  return baby?.id || null;
+}
+
+async function getContext(msgOrQuery) {
+  if (!supabase) return null;
+
+  const isQuery = !!msgOrQuery.from && !!msgOrQuery.message;
+  const chatId = isQuery ? msgOrQuery.message.chat.id : msgOrQuery.chat.id;
+  const telegramUserId = msgOrQuery.from.id;
+
+  const appUserId = await resolveAppUserIdByChat(chatId, telegramUserId);
+  if (!appUserId) return { chatId, telegramUserId, appUserId: null, babyId: null };
+
+  const babyId = await getBabyIdByUser(appUserId);
+  return { chatId, telegramUserId, appUserId, babyId };
+}
+
+async function createActivityRow(babyId, payload) {
+  const { data, error } = await supabase
+    .from('activities')
+    .insert([{ baby_id: babyId, ...payload }])
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function updateActivityRow(id, payload) {
+  const { data, error } = await supabase
+    .from('activities')
+    .update(payload)
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
+}
+
+async function refreshActiveTimersFromWeb(context) {
+  if (!context?.babyId) return [];
+  const { data, error } = await supabase
+    .from('activities')
+    .select('id, type, start_time, end_time, comment')
+    .eq('baby_id', context.babyId)
+    .in('type', ['breastfeeding', 'sleep'])
+    .is('end_time', null)
+    .order('start_time', { ascending: true });
+
+  if (error) {
+    console.error('Ошибка sync таймеров:', error);
+    return [];
+  }
+
+  const normalized = (data || []).map((row) => ({
+    ...row,
+    side: row.type === 'breastfeeding' && row.comment?.includes('side:right') ? 'right' : 'left',
+    source: 'web',
+  }));
+
+  const local = new Map();
+  for (const timer of normalized) {
+    local.set(timerKey(timer), timer);
+  }
+  botActiveTimers.set(context.chatId, local);
+  trackedChats.add(context.chatId);
+  return normalized;
+}
+
+async function showQuickMenu(chatId, context) {
+  const timers = await refreshActiveTimersFromWeb(context);
+  await bot.sendMessage(chatId, `Выберите активность.\n${formatTimersForMenu(timers)}`, {
+    reply_markup: quickActivitiesKeyboard(),
+  });
+}
+
+async function ensureContextOrHelp(chatId, context) {
+  if (!supabase) {
+    await bot.sendMessage(chatId, 'База данных не настроена.');
+    return false;
+  }
+  if (!context?.appUserId || !context?.babyId) {
+    await bot.sendMessage(chatId, 'Не нашёл профиль малыша. Откройте веб-приложение и войдите в аккаунт.', {
+      reply_markup: { inline_keyboard: [[{ text: '📊 Открыть приложение', web_app: { url: WEB_APP_URL } }]] },
+    });
+    return false;
+  }
+  return true;
+}
+
+async function startTimer(context, type, side = null) {
+  const chatTimers = botActiveTimers.get(context.chatId) || new Map();
+  if (type === 'sleep' && chatTimers.get('sleep')) {
+    return { alreadyRunning: true, runningType: 'sleep' };
+  }
+
+  if (type === 'breastfeeding') {
+    const otherSide = side === 'left' ? 'right' : 'left';
+    const other = chatTimers.get(`breastfeeding:${otherSide}`);
+    if (other) {
+      await stopTimer(context, other, true);
+    }
+    const same = chatTimers.get(`breastfeeding:${side}`);
+    if (same) {
+      return { alreadyRunning: true, runningType: `breastfeeding:${side}` };
+    }
+  }
+
+  const startedAt = new Date().toISOString();
+  const payload = {
+    type,
+    start_time: startedAt,
+    end_time: null,
+    comment: type === 'breastfeeding' ? `side:${side}` : 'started_from:telegram',
+    left_duration: type === 'breastfeeding' ? 0 : undefined,
+    right_duration: type === 'breastfeeding' ? 0 : undefined,
+  };
+  const row = await createActivityRow(context.babyId, payload);
+  const timer = { ...row, side, source: 'bot' };
+  chatTimers.set(timerKey({ type, side }), timer);
+  botActiveTimers.set(context.chatId, chatTimers);
+  trackedChats.add(context.chatId);
+  return { alreadyRunning: false, timer };
+}
+
+async function stopTimer(context, timer, silent = false) {
+  const end = new Date().toISOString();
+  const durationSec = toDurationSec(timer.start_time, end);
+  const payload = { end_time: end };
+
+  if (timer.type === 'breastfeeding') {
+    payload.left_duration = timer.side === 'left' ? durationSec : 0;
+    payload.right_duration = timer.side === 'right' ? durationSec : 0;
+  }
+
+  await updateActivityRow(timer.id, payload);
+  const chatTimers = botActiveTimers.get(context.chatId) || new Map();
+  chatTimers.delete(timerKey(timer));
+  botActiveTimers.set(context.chatId, chatTimers);
+
+  if (!silent) {
+    await bot.sendMessage(context.chatId, `Готово: ${timer.type === 'sleep' ? 'сон' : 'кормление'} сохранён (${Math.max(1, Math.floor(durationSec / 60))} мин).`, {
+      reply_markup: getMainMenuKeyboard(),
+    });
+  }
+}
+
+async function syncTrackedTimers() {
+  if (!supabase || trackedChats.size === 0) return;
+
+  for (const chatId of trackedChats) {
+    try {
+      const session = getSession(chatId);
+      const context = session.context;
+      if (!context?.babyId) continue;
+
+      const remoteTimers = await refreshActiveTimersFromWeb(context);
+      if (session.state !== FSM_STATE.IDLE) continue;
+
+      const map = new Map(remoteTimers.map((t) => [timerKey(t), t]));
+      botActiveTimers.set(chatId, map);
+    } catch (error) {
+      console.error('Ошибка фоновой синхронизации:', error);
+    }
+  }
+}
+
+setInterval(syncTrackedTimers, 20000);
+
+async function handleQuickActivitySelect(query, activity) {
+  const context = await getContext(query);
+  const chatId = query.message.chat.id;
+
+  if (!(await ensureContextOrHelp(chatId, context))) return;
+
+  const session = getSession(chatId);
+  session.context = context;
+
+  await refreshActiveTimersFromWeb(context);
+
+  if (activity === 'breastfeeding') {
+    setSessionState(chatId, FSM_STATE.WAIT_BREAST_SIDE, { context });
+    return bot.sendMessage(chatId, 'Выберите грудь:', {
+      reply_markup: {
+        inline_keyboard: [[
+          { text: '⬅️ Левая', callback_data: 'qa:breast:left' },
+          { text: '➡️ Правая', callback_data: 'qa:breast:right' },
+        ]],
+      },
+    });
+  }
+
+  if (activity === 'sleep') {
+    const started = await startTimer(context, 'sleep');
+    if (started.alreadyRunning) {
+      setSessionState(chatId, FSM_STATE.WAIT_STOP_CONFIRM, { context, type: 'sleep' });
+      return bot.sendMessage(chatId, 'Сон уже идёт. Остановить текущий?', {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '⏹ Остановить текущую', callback_data: 'qa:stop:sleep' },
+            { text: 'Отмена', callback_data: 'qa:cancel' },
+          ]],
+        },
+      });
+    }
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return bot.sendMessage(chatId, 'Сон запущен.', { reply_markup: getMainMenuKeyboard() });
+  }
+
+  if (activity === 'bottle') {
+    setSessionState(chatId, FSM_STATE.WAIT_BOTTLE_AMOUNT, { context });
+    return bot.sendMessage(chatId, 'Введите объём в мл (например, 120):');
+  }
+
+  if (activity === 'diaper') {
+    setSessionState(chatId, FSM_STATE.WAIT_DIAPER_TYPE, { context });
+    return bot.sendMessage(chatId, 'Какой подгузник?', {
+      reply_markup: {
+        keyboard: [[{ text: 'Мокрый' }, { text: 'Грязный' }], [{ text: MAIN_MENU_BUTTON }]],
+        resize_keyboard: true,
+      },
+    });
+  }
+
+  if (activity === 'medicine') {
+    setSessionState(chatId, FSM_STATE.WAIT_MEDICINE_NAME, { context });
+    return bot.sendMessage(chatId, 'Введите название лекарства:');
+  }
+
+  if (activity === 'bath') {
+    await createActivityRow(context.babyId, {
+      type: 'bath',
+      start_time: new Date().toISOString(),
+      end_time: new Date().toISOString(),
+      comment: 'quick_add:telegram',
+    });
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return bot.sendMessage(chatId, 'Купание сохранено.', { reply_markup: getMainMenuKeyboard() });
+  }
+}
+
+// ============================================
 // Обработчики команд бота
 // ============================================
 
@@ -444,6 +814,10 @@ bot.onText(/\/start/, async (msg) => {
     parse_mode: 'Markdown',
     reply_markup: keyboard
   });
+
+  bot.sendMessage(chatId, 'Нажмите «➕ Добавить активность», чтобы быстро сохранить событие.', {
+    reply_markup: getMainMenuKeyboard(),
+  });
 });
 
 bot.onText(/\/help/, (msg) => {
@@ -496,8 +870,64 @@ bot.onText(/\/help/, (msg) => {
   });
 });
 
-bot.on('callback_query', (query) => {
+bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
+
+  if (query.data?.startsWith('qa:')) {
+    await bot.answerCallbackQuery(query.id);
+    const [, action, value] = query.data.split(':');
+
+    if (action === 'cancel') {
+      setSessionState(chatId, FSM_STATE.IDLE);
+      return bot.sendMessage(chatId, 'Отменено.', { reply_markup: getMainMenuKeyboard() });
+    }
+
+    if (['breastfeeding', 'bottle', 'sleep', 'diaper', 'medicine', 'bath'].includes(action)) {
+      return handleQuickActivitySelect(query, action);
+    }
+
+    if (action === 'breast') {
+      const context = await getContext(query);
+      if (!(await ensureContextOrHelp(chatId, context))) return;
+
+      const side = value;
+      const started = await startTimer(context, 'breastfeeding', side);
+      if (started.alreadyRunning) {
+        return bot.sendMessage(chatId, 'Кормление уже идёт. Остановить текущее?', {
+          reply_markup: {
+            inline_keyboard: [[
+              { text: '⏹ Остановить текущую', callback_data: `qa:stop:breastfeeding_${side}` },
+              { text: 'Отмена', callback_data: 'qa:cancel' },
+            ]],
+          },
+        });
+      }
+
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      return bot.sendMessage(chatId, `Кормление (${side === 'left' ? 'левая' : 'правая'} грудь) запущено.`, {
+        reply_markup: getMainMenuKeyboard(),
+      });
+    }
+
+    if (action === 'stop') {
+      const context = await getContext(query);
+      if (!(await ensureContextOrHelp(chatId, context))) return;
+      await refreshActiveTimersFromWeb(context);
+      const chatTimers = botActiveTimers.get(chatId) || new Map();
+      const key = value?.startsWith('breastfeeding_')
+        ? `breastfeeding:${value.split('_')[1]}`
+        : value;
+      const timer = chatTimers.get(key);
+      if (!timer) {
+        return bot.sendMessage(chatId, 'Таймер уже остановлен в веб-приложении.', { reply_markup: getMainMenuKeyboard() });
+      }
+      await stopTimer(context, timer);
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      return showQuickMenu(chatId, context);
+    }
+
+    return;
+  }
   
   if (query.data === 'help') {
     bot.answerCallbackQuery(query.id);
@@ -538,16 +968,80 @@ bot.on('callback_query', (query) => {
   }
 });
 
-bot.on('message', (msg) => {
+bot.on('message', async (msg) => {
   if (msg.text && msg.text.startsWith('/')) return;
   
   const chatId = msg.chat.id;
-  bot.sendMessage(chatId, 'Все функции доступны в приложении! 👇', {
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '🚀 Открыть приложение', web_app: { url: WEB_APP_URL } }
-      ]]
+  const session = getSession(chatId);
+  const context = session.context || await getContext(msg);
+  session.context = context;
+
+  if (msg.text === MAIN_MENU_BUTTON) {
+    if (!(await ensureContextOrHelp(chatId, context))) return;
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return showQuickMenu(chatId, context);
+  }
+
+  try {
+    if (session.state === FSM_STATE.WAIT_BOTTLE_AMOUNT) {
+      const amount = Number(msg.text?.trim());
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return bot.sendMessage(chatId, 'Введите объём числом, например 90.');
+      }
+      await createActivityRow(context.babyId, {
+        type: 'bottle',
+        amount,
+        start_time: new Date().toISOString(),
+        end_time: new Date().toISOString(),
+        comment: 'quick_add:telegram',
+      });
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `Бутылочка сохранена: ${amount} мл.`, { reply_markup: getMainMenuKeyboard() });
+      return showQuickMenu(chatId, context);
     }
+
+    if (session.state === FSM_STATE.WAIT_DIAPER_TYPE) {
+      const normalized = String(msg.text || '').toLowerCase();
+      const diaperType = normalized.includes('гр') ? 'dirty' : normalized.includes('мок') ? 'wet' : null;
+      if (!diaperType) {
+        return bot.sendMessage(chatId, 'Выберите: Мокрый или Грязный.');
+      }
+      await createActivityRow(context.babyId, {
+        type: 'diaper',
+        diaper_type: diaperType,
+        start_time: new Date().toISOString(),
+        end_time: new Date().toISOString(),
+        comment: 'quick_add:telegram',
+      });
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, 'Подгузник сохранён.', { reply_markup: getMainMenuKeyboard() });
+      return showQuickMenu(chatId, context);
+    }
+
+    if (session.state === FSM_STATE.WAIT_MEDICINE_NAME) {
+      const name = String(msg.text || '').trim();
+      if (!name) {
+        return bot.sendMessage(chatId, 'Введите название лекарства.');
+      }
+      await createActivityRow(context.babyId, {
+        type: 'medicine',
+        medicine_name: name,
+        start_time: new Date().toISOString(),
+        end_time: new Date().toISOString(),
+        comment: 'quick_add:telegram',
+      });
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `Лекарство «${name}» сохранено.`, { reply_markup: getMainMenuKeyboard() });
+      return showQuickMenu(chatId, context);
+    }
+  } catch (error) {
+    console.error('Ошибка сохранения активности через FSM:', error);
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return bot.sendMessage(chatId, 'Не получилось сохранить. Повторите ещё раз.', { reply_markup: getMainMenuKeyboard() });
+  }
+
+  return bot.sendMessage(chatId, 'Нажмите «➕ Добавить активность».', {
+    reply_markup: getMainMenuKeyboard(),
   });
 });
 
