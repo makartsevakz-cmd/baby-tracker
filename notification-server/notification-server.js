@@ -174,6 +174,7 @@ async function checkIntervalNotification(notification, now) {
     }
     
     // Получить последнюю активность этого типа
+    // В таблице activities используется колонка type (не activity_type)
     const { data: lastActivity } = await supabase
       .from('activities')
       .select('*')

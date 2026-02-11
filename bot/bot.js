@@ -161,12 +161,12 @@ async function checkIntervalNotification(notification, now, userId) {
       return { shouldSend: false };
     }
     
-    // ИСПРАВЛЕНО: используем activity_type вместо type
+    // В таблице activities колонка типа называется `type`
     const { data: lastActivity, error: activityError } = await supabase
       .from('activities')
       .select('*')
       .eq('baby_id', baby.id)
-      .eq('activity_type', notification.activity_type)
+      .eq('type', notification.activity_type)
       .order('start_time', { ascending: false })
       .limit(1)
       .maybeSingle();
