@@ -379,6 +379,8 @@ if (supabase) {
 // ============================================
 
 const MAIN_MENU_BUTTON = '➕ Добавить активность';
+const HOME_MENU_BUTTON = '🏠 Главное меню';
+const ACTIVE_TIMERS_BUTTON = '⏱ Запущенные активности';
 const QUICK_ACTIVITIES = {
   breastfeeding: '🤱 Кормление грудью',
   bottle: '🍼 Бутылочка',
@@ -418,7 +420,10 @@ function setSessionState(chatId, state, draft = {}) {
 
 function getMainMenuKeyboard() {
   return {
-    keyboard: [[{ text: MAIN_MENU_BUTTON }]],
+    keyboard: [
+      [{ text: MAIN_MENU_BUTTON }],
+      [{ text: ACTIVE_TIMERS_BUTTON }],
+    ],
     resize_keyboard: true,
     persistent: true,
   };
@@ -433,6 +438,8 @@ function quickActivitiesKeyboard() {
       [{ text: QUICK_ACTIVITIES.diaper, callback_data: 'qa:diaper' }],
       [{ text: QUICK_ACTIVITIES.medicine, callback_data: 'qa:medicine' }],
       [{ text: QUICK_ACTIVITIES.bath, callback_data: 'qa:bath' }],
+      [{ text: '⏱ Запущенные активности', callback_data: 'qa:list_active' }],
+      [{ text: '🏠 В главное меню', callback_data: 'qa:home' }],
       [{ text: '📊 Открыть приложение', web_app: { url: WEB_APP_URL } }],
     ],
   };
@@ -459,6 +466,29 @@ function formatTimersForMenu(timers) {
     return `• ${timer.type} (${min} мин)`;
   });
   return `Активные таймеры:\n${lines.join('\n')}`;
+}
+
+function timerDisplayLabel(timer) {
+  const sec = toDurationSec(timer.start_time || timer.startTime);
+  const min = Math.max(1, Math.floor(sec / 60));
+
+  if (timer.type === 'breastfeeding') {
+    const side = timer.side === 'right' ? 'правая грудь' : 'левая грудь';
+    return `🤱 ${side} (${min} мин)`;
+  }
+
+  if (timer.type === 'sleep') {
+    return `😴 сон (${min} мин)`;
+  }
+
+  return `⏱ ${timer.type} (${min} мин)`;
+}
+
+function stopCallbackForTimer(timer) {
+  if (timer.type === 'breastfeeding') {
+    return `qa:stop:breastfeeding_${timer.side || 'left'}`;
+  }
+  return `qa:stop:${timer.type}`;
 }
 
 async function resolveAppUserIdByChat(chatId, telegramUserId) {
@@ -576,6 +606,27 @@ async function showQuickMenu(chatId, context) {
   const timers = await refreshActiveTimersFromWeb(context);
   await bot.sendMessage(chatId, `Выберите активность.\n${formatTimersForMenu(timers)}`, {
     reply_markup: quickActivitiesKeyboard(),
+  });
+}
+
+async function showActiveTimersMenu(chatId, context) {
+  const timers = await refreshActiveTimersFromWeb(context);
+
+  if (!timers.length) {
+    return bot.sendMessage(chatId, 'Сейчас нет запущенных активностей.', {
+      reply_markup: quickActivitiesKeyboard(),
+    });
+  }
+
+  const inline_keyboard = timers.map((timer) => ([{
+    text: `⏹ Остановить: ${timerDisplayLabel(timer)}`,
+    callback_data: stopCallbackForTimer(timer),
+  }]));
+
+  inline_keyboard.push([{ text: '🏠 В главное меню', callback_data: 'qa:home' }]);
+
+  return bot.sendMessage(chatId, 'Выберите активность для остановки:', {
+    reply_markup: { inline_keyboard },
   });
 }
 
@@ -882,6 +933,18 @@ bot.on('callback_query', async (query) => {
       return bot.sendMessage(chatId, 'Отменено.', { reply_markup: getMainMenuKeyboard() });
     }
 
+    if (action === 'home') {
+      setSessionState(chatId, FSM_STATE.IDLE);
+      return bot.sendMessage(chatId, 'Главное меню.', { reply_markup: getMainMenuKeyboard() });
+    }
+
+    if (action === 'list_active') {
+      const context = await getContext(query);
+      if (!(await ensureContextOrHelp(chatId, context))) return;
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      return showActiveTimersMenu(chatId, context);
+    }
+
     if (['breastfeeding', 'bottle', 'sleep', 'diaper', 'medicine', 'bath'].includes(action)) {
       return handleQuickActivitySelect(query, action);
     }
@@ -980,6 +1043,17 @@ bot.on('message', async (msg) => {
     if (!(await ensureContextOrHelp(chatId, context))) return;
     setSessionState(chatId, FSM_STATE.IDLE, { context });
     return showQuickMenu(chatId, context);
+  }
+
+  if (msg.text === ACTIVE_TIMERS_BUTTON) {
+    if (!(await ensureContextOrHelp(chatId, context))) return;
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return showActiveTimersMenu(chatId, context);
+  }
+
+  if (msg.text === HOME_MENU_BUTTON) {
+    setSessionState(chatId, FSM_STATE.IDLE, { context });
+    return bot.sendMessage(chatId, 'Главное меню.', { reply_markup: getMainMenuKeyboard() });
   }
 
   try {

@@ -146,6 +146,23 @@ const ActivityTracker = () => {
     }
   };
 
+  const normalizeSystemComment = (comment) => {
+    if (typeof comment !== 'string') return '';
+
+    const normalized = comment.trim();
+    if (!normalized) return '';
+
+    if (normalized === 'started_from:telegram' || normalized === 'quick_add:telegram') {
+      return 'Добавлено через Telegram';
+    }
+
+    if (normalized === 'side:left' || normalized === 'side:right') {
+      return '';
+    }
+
+    return normalized;
+  };
+
   // Convert Supabase activity to app format
   const convertFromSupabaseActivity = (dbActivity) => {
     const parsedBurpComment = dbActivity.type === 'burp'
@@ -157,7 +174,7 @@ const ActivityTracker = () => {
       type: dbActivity.type,
       startTime: dbActivity.start_time,
       endTime: dbActivity.end_time,
-      comment: parsedBurpComment?.comment ?? dbActivity.comment,
+      comment: normalizeSystemComment(parsedBurpComment?.comment ?? dbActivity.comment),
       date: new Date(dbActivity.start_time).toLocaleDateString('ru-RU'),
       // Type-specific fields
       leftDuration: dbActivity.left_duration,
@@ -330,6 +347,10 @@ const ActivityTracker = () => {
   const activitiesByChronology = useMemo(() => {
     return [...activities].sort((a, b) => getActivityChronologyTime(b) - getActivityChronologyTime(a));
   }, [activities, getActivityChronologyTime]);
+
+  const recentCompletedActivities = useMemo(() => {
+    return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
+  }, [activitiesByChronology]);
 
   const hasBabyProfile = useMemo(() => {
     return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
@@ -2246,9 +2267,9 @@ const ActivityTracker = () => {
         </div>
 
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
-          <h2 className="text-lg font-semibold mb-4">Последние записи ({activities.length})</h2>
+          <h2 className="text-lg font-semibold mb-4">Последние записи ({recentCompletedActivities.length})</h2>
           <div className="space-y-3">
-            {activitiesByChronology.slice(0, 10).map(activity => {
+            {recentCompletedActivities.slice(0, 10).map(activity => {
               const ActivityIcon = activityTypes[activity.type].icon;
               const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
               
@@ -2303,7 +2324,7 @@ const ActivityTracker = () => {
                 </div>
               );
             })}
-            {activities.length === 0 && (
+            {recentCompletedActivities.length === 0 && (
               <div className="text-center text-gray-500 py-8">Добавьте первую запись</div>
             )}
           </div>
