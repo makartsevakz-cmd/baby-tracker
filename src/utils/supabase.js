@@ -27,6 +27,27 @@ const isUserAlreadyExistsError = (error) =>
     (error.message?.includes('User already registered') || error.code === 'user_already_exists')
   );
 
+
+const getTelegramUserId = (telegramUser) => String(telegramUser?.id || '');
+const getSessionTelegramId = (user) => String(user?.user_metadata?.telegram_id || '');
+
+const isSessionMatchingTelegramUser = (user, telegramUser) => {
+  const telegramUserId = getTelegramUserId(telegramUser);
+  if (!telegramUserId) return true;
+
+  const sessionTelegramId = getSessionTelegramId(user);
+  if (sessionTelegramId) {
+    return sessionTelegramId === telegramUserId;
+  }
+
+  const sessionEmail = String(user?.email || '');
+  if (sessionEmail) {
+    return sessionEmail === buildTelegramEmail(telegramUserId);
+  }
+
+  return false;
+};
+
 // Authentication helpers
 export const authHelpers = {
   // Sign in with Telegram user data
@@ -111,30 +132,39 @@ export const authHelpers = {
 
   async ensureAuthenticatedSession({ telegramUser } = {}) {
     if (telegramUser) {
+      const existingUser = await this.getCurrentUser();
+
+      if (existingUser && !isSessionMatchingTelegramUser(existingUser, telegramUser)) {
+        console.warn('Telegram account switched: clearing mismatched Supabase session', {
+          currentSessionTelegramId: getSessionTelegramId(existingUser),
+          telegramUserId: getTelegramUserId(telegramUser),
+        });
+
+        const { error: signOutError } = await this.signOut();
+        if (signOutError) {
+          console.error('Failed to sign out mismatched Supabase session:', signOutError);
+        }
+      }
+
       const signInResult = await this.signInWithTelegram(telegramUser);
       if (!signInResult.error) {
         return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
       }
 
-      // Fallback to anonymous session instead of local cache when Telegram auth fails.
-      // This keeps data operations in Supabase and avoids switching to local-only mode.
-      console.warn('Telegram auth failed, switching to anonymous Supabase session:', signInResult.error);
+      // Если Telegram-auth временно не удался, не переключаемся на anonymous,
+      // иначе пользователь попадает в онбординг с пустым профилем.
+      console.warn('Telegram auth failed. Trying to reuse only matching session:', signInResult.error);
 
-      const existingUser = await this.getCurrentUser();
-      if (existingUser) {
-        return { user: existingUser, mode: 'session', error: null };
+      const freshUser = await this.getCurrentUser();
+      if (freshUser && isSessionMatchingTelegramUser(freshUser, telegramUser)) {
+        return { user: freshUser, mode: 'session', error: null };
       }
 
-      const anonymousResult = await this.signInAnonymously();
-      if (anonymousResult.error) {
-        return { user: null, mode: 'telegram', error: signInResult.error };
+      if (freshUser && !isSessionMatchingTelegramUser(freshUser, telegramUser)) {
+        await this.signOut();
       }
 
-      return {
-        user: anonymousResult.data?.user ?? anonymousResult.data?.session?.user ?? null,
-        mode: 'anonymous_after_telegram_error',
-        error: null,
-      };
+      return { user: null, mode: 'telegram', error: signInResult.error };
     }
 
     const existingUser = await this.getCurrentUser();

@@ -259,6 +259,7 @@ const ActivityTracker = () => {
 
       if (hasSupabase) {
         const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        cacheService.setNamespace(telegramUser?.id ? `telegram_${telegramUser.id}` : 'global');
 
         try {
           const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({ telegramUser });
@@ -324,6 +325,8 @@ const ActivityTracker = () => {
         }
       } else {
         // Not in Telegram or Supabase not configured, use cache
+        const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
+        cacheService.setNamespace(telegramUser?.id ? `telegram_${telegramUser.id}` : 'global');
         console.log('Using cache fallback (no Telegram or Supabase config)');
         await loadFromCache();
       }
