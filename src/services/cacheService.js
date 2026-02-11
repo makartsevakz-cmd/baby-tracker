@@ -11,6 +11,7 @@ class CacheService {
     this.platform = Platform.getCurrentPlatform();
     this.prefix = 'cache_';
     this.metaPrefix = 'cache_meta_';
+    this.namespace = 'global';
     this.isReady = false;
     this.memoryStore = new Map();
     this.initPromise = this._init();
@@ -36,14 +37,31 @@ class CacheService {
   }
 
   /**
+   * Установить namespace кеша (например, Telegram user id),
+   * чтобы данные разных аккаунтов не смешивались.
+   */
+  setNamespace(namespace) {
+    const normalized = String(namespace || 'global').trim() || 'global';
+    this.namespace = normalized;
+  }
+
+  _buildDataKey(key) {
+    return `${this.prefix}${this.namespace}_${key}`;
+  }
+
+  _buildMetaKey(key) {
+    return `${this.metaPrefix}${this.namespace}_${key}`;
+  }
+
+  /**
    * Получить данные из кеша
    */
   async get(key) {
     await this._ensureReady();
 
     try {
-      const fullKey = this.prefix + key;
-      const metaKey = this.metaPrefix + key;
+      const fullKey = this._buildDataKey(key);
+      const metaKey = this._buildMetaKey(key);
 
       const [dataStr, metaStr] = await Promise.all([
         this._getItem(fullKey),
@@ -78,8 +96,8 @@ class CacheService {
     await this._ensureReady();
 
     try {
-      const fullKey = this.prefix + key;
-      const metaKey = this.metaPrefix + key;
+      const fullKey = this._buildDataKey(key);
+      const metaKey = this._buildMetaKey(key);
 
       const dataStr = JSON.stringify(data);
       const meta = {
@@ -107,8 +125,8 @@ class CacheService {
     await this._ensureReady();
 
     try {
-      const fullKey = this.prefix + key;
-      const metaKey = this.metaPrefix + key;
+      const fullKey = this._buildDataKey(key);
+      const metaKey = this._buildMetaKey(key);
 
       await Promise.all([
         this._removeItem(fullKey),
@@ -210,14 +228,17 @@ class CacheService {
       const now = Date.now();
 
       for (const fullKey of cacheKeys) {
-        const key = fullKey.replace(this.prefix, '');
-        const metaKey = this.metaPrefix + key;
+        const keyWithNamespace = fullKey.replace(this.prefix, '');
+        const metaKey = this.metaPrefix + keyWithNamespace;
         const metaStr = await this._getItem(metaKey);
 
         if (metaStr) {
           const meta = JSON.parse(metaStr);
           if (meta.expiresAt && now > meta.expiresAt) {
-            await this.remove(key);
+            await Promise.all([
+              this._removeItem(fullKey),
+              this._removeItem(metaKey),
+            ]);
             cleaned++;
           }
         }

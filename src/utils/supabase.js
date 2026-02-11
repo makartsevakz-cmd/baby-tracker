@@ -27,6 +27,15 @@ const isUserAlreadyExistsError = (error) =>
     (error.message?.includes('User already registered') || error.code === 'user_already_exists')
   );
 
+
+const getTelegramUserId = (telegramUser) => String(telegramUser?.id || '');
+const getSessionTelegramId = (user) => String(user?.user_metadata?.telegram_id || '');
+const isSessionMatchingTelegramUser = (user, telegramUser) => {
+  const telegramUserId = getTelegramUserId(telegramUser);
+  if (!telegramUserId) return true;
+  return getSessionTelegramId(user) === telegramUserId;
+};
+
 // Authentication helpers
 export const authHelpers = {
   // Sign in with Telegram user data
@@ -111,6 +120,20 @@ export const authHelpers = {
 
   async ensureAuthenticatedSession({ telegramUser } = {}) {
     if (telegramUser) {
+      const existingUser = await this.getCurrentUser();
+
+      if (existingUser && !isSessionMatchingTelegramUser(existingUser, telegramUser)) {
+        console.warn('Telegram account switched: clearing mismatched Supabase session', {
+          currentSessionTelegramId: getSessionTelegramId(existingUser),
+          telegramUserId: getTelegramUserId(telegramUser),
+        });
+
+        const { error: signOutError } = await this.signOut();
+        if (signOutError) {
+          console.error('Failed to sign out mismatched Supabase session:', signOutError);
+        }
+      }
+
       const signInResult = await this.signInWithTelegram(telegramUser);
       if (!signInResult.error) {
         return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
@@ -120,9 +143,13 @@ export const authHelpers = {
       // This keeps data operations in Supabase and avoids switching to local-only mode.
       console.warn('Telegram auth failed, switching to anonymous Supabase session:', signInResult.error);
 
-      const existingUser = await this.getCurrentUser();
-      if (existingUser) {
-        return { user: existingUser, mode: 'session', error: null };
+      const freshUser = await this.getCurrentUser();
+      if (freshUser && isSessionMatchingTelegramUser(freshUser, telegramUser)) {
+        return { user: freshUser, mode: 'session', error: null };
+      }
+
+      if (freshUser && !isSessionMatchingTelegramUser(freshUser, telegramUser)) {
+        await this.signOut();
       }
 
       const anonymousResult = await this.signInAnonymously();
