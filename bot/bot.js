@@ -381,6 +381,7 @@ if (supabase) {
 const MAIN_MENU_BUTTON = '➕ Добавить активность';
 const HOME_MENU_BUTTON = '🏠 Главное меню';
 const ACTIVE_TIMERS_BUTTON = '⏱ Запущенные активности';
+const OPEN_APP_BUTTON = '📊 Открыть приложение';
 const QUICK_ACTIVITIES = {
   breastfeeding: '🤱 Кормление грудью',
   bottle: '🍼 Бутылочка',
@@ -421,11 +422,11 @@ function setSessionState(chatId, state, draft = {}) {
 function getMainMenuKeyboard() {
   return {
     keyboard: [
-      [{ text: MAIN_MENU_BUTTON }],
-      [{ text: ACTIVE_TIMERS_BUTTON }],
+      [{ text: MAIN_MENU_BUTTON }, { text: ACTIVE_TIMERS_BUTTON }],
+      [{ text: HOME_MENU_BUTTON }, { text: OPEN_APP_BUTTON, web_app: { url: WEB_APP_URL } }],
     ],
     resize_keyboard: true,
-    persistent: true,
+    is_persistent: true,
   };
 }
 
@@ -438,11 +439,16 @@ function quickActivitiesKeyboard() {
       [{ text: QUICK_ACTIVITIES.diaper, callback_data: 'qa:diaper' }],
       [{ text: QUICK_ACTIVITIES.medicine, callback_data: 'qa:medicine' }],
       [{ text: QUICK_ACTIVITIES.bath, callback_data: 'qa:bath' }],
-      [{ text: '⏱ Запущенные активности', callback_data: 'qa:list_active' }],
-      [{ text: '🏠 В главное меню', callback_data: 'qa:home' }],
-      [{ text: '📊 Открыть приложение', web_app: { url: WEB_APP_URL } }],
     ],
   };
+}
+
+async function sendMainMenuMessage(chatId) {
+  return bot.sendMessage(chatId, `👶 Трекер малыша
+
+Используйте нижнее меню для быстрых действий.`, {
+    reply_markup: getMainMenuKeyboard(),
+  });
 }
 
 function timerKey(timer) {
@@ -623,8 +629,6 @@ async function showActiveTimersMenu(chatId, context) {
     callback_data: stopCallbackForTimer(timer),
   }]));
 
-  inline_keyboard.push([{ text: '🏠 В главное меню', callback_data: 'qa:home' }]);
-
   return bot.sendMessage(chatId, 'Выберите активность для остановки:', {
     reply_markup: { inline_keyboard },
   });
@@ -801,7 +805,6 @@ async function handleQuickActivitySelect(query, activity) {
 
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
-  const firstName = msg.from.first_name || 'друг';
   const telegramUserId = msg.from.id;
 
   if (supabase) {
@@ -824,51 +827,7 @@ bot.onText(/\/start/, async (msg) => {
     }
   }
 
-  const welcomeMessage = `
-👶 Привет, ${firstName}!
-
-Добро пожаловать в **Трекер малыша** — удобное приложение для отслеживания активностей вашего ребенка.
-
-📊 С помощью этого бота вы сможете:
-• Отслеживать кормление, сон и прогулки
-• Вести учет смены подгузников
-• Записывать прием лекарств и купания
-• Следить за ростом и весом малыша
-• Получать напоминания (время + интервалы!)
-• Просматривать статистику и историю
-
-Нажмите кнопку ниже, чтобы открыть приложение! 👇
-  `.trim();
-
-  const keyboard = {
-    inline_keyboard: [
-      [
-        {
-          text: '🚀 Открыть приложение',
-          web_app: { url: WEB_APP_URL }
-        }
-      ],
-      [
-        {
-          text: '❓ Помощь',
-          callback_data: 'help'
-        },
-        {
-          text: '📖 О приложении',
-          callback_data: 'about'
-        }
-      ]
-    ]
-  };
-
-  bot.sendMessage(chatId, welcomeMessage, {
-    parse_mode: 'Markdown',
-    reply_markup: keyboard
-  });
-
-  bot.sendMessage(chatId, 'Нажмите «➕ Добавить активность», чтобы быстро сохранить событие.', {
-    reply_markup: getMainMenuKeyboard(),
-  });
+  await sendMainMenuMessage(chatId);
 });
 
 bot.onText(/\/help/, (msg) => {
@@ -935,7 +894,7 @@ bot.on('callback_query', async (query) => {
 
     if (action === 'home') {
       setSessionState(chatId, FSM_STATE.IDLE);
-      return bot.sendMessage(chatId, 'Главное меню.', { reply_markup: getMainMenuKeyboard() });
+      return sendMainMenuMessage(chatId);
     }
 
     if (action === 'list_active') {
@@ -1053,7 +1012,7 @@ bot.on('message', async (msg) => {
 
   if (msg.text === HOME_MENU_BUTTON) {
     setSessionState(chatId, FSM_STATE.IDLE, { context });
-    return bot.sendMessage(chatId, 'Главное меню.', { reply_markup: getMainMenuKeyboard() });
+    return sendMainMenuMessage(chatId);
   }
 
   try {
