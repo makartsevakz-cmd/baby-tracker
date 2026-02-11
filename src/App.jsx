@@ -331,6 +331,10 @@ const ActivityTracker = () => {
     return [...activities].sort((a, b) => getActivityChronologyTime(b) - getActivityChronologyTime(a));
   }, [activities, getActivityChronologyTime]);
 
+  const hasBabyProfile = useMemo(() => {
+    return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
+  }, [babyProfile]);
+
   const handleBack = useCallback(() => {
     if (view !== 'main') {
       if (tg) tg.HapticFeedback?.impactOccurred('light');
@@ -399,6 +403,12 @@ const ActivityTracker = () => {
     // Prevent double saves
     if (isSaving) {
       console.log('Already saving, ignoring duplicate request');
+      return;
+    }
+
+    if (!hasBabyProfile) {
+      alert('Сначала заполните данные малыша');
+      setView('onboarding');
       return;
     }
     
@@ -523,7 +533,7 @@ const ActivityTracker = () => {
     setFormData({});
     setEditingId(null);
     setIsSaving(false);
-  }, [formData, tg, timers, pausedTimers, timerMeta, editingId, getTotalDuration, resetTimer, isAuthenticated, activities, isSaving]);
+  }, [formData, tg, timers, pausedTimers, timerMeta, editingId, getTotalDuration, resetTimer, isAuthenticated, activities, isSaving, hasBabyProfile]);
 
   const deleteActivity = async (id) => {
     if (tg) tg.HapticFeedback?.notificationOccurred('warning');
@@ -674,10 +684,22 @@ const ActivityTracker = () => {
 
   // Sync profileForm with babyProfile when entering profile view
   useEffect(() => {
-    if (view === 'profile') {
+    if (view === 'profile' || view === 'onboarding') {
       setProfileForm(babyProfile);
     }
   }, [view, babyProfile]);
+
+  useEffect(() => {
+    if (!isLoading && !hasBabyProfile && view === 'main') {
+      setProfileForm(prev => ({
+        ...prev,
+        name: babyProfile.name || '',
+        birthDate: babyProfile.birthDate || '',
+        photo: babyProfile.photo || null,
+      }));
+      setView('onboarding');
+    }
+  }, [isLoading, hasBabyProfile, view, babyProfile]);
 
   useEffect(() => {
     if (view !== 'notifications' || notificationHelpers) return;
@@ -735,6 +757,12 @@ const ActivityTracker = () => {
   }, [isAuthenticated]);
 
   const startActivity = (type) => {
+    if (!hasBabyProfile) {
+      alert('Сначала заполните данные малыша');
+      setView('onboarding');
+      return;
+    }
+
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     
     setSelectedActivity(type);
@@ -875,6 +903,11 @@ const ActivityTracker = () => {
   // Profile functions
   const saveProfile = useCallback(async () => {
     if (isSavingProfile) return; // Prevent double saves
+
+    if (!profileForm.name?.trim() || !profileForm.birthDate) {
+      alert('Укажите имя и дату рождения малыша');
+      return;
+    }
     
     setIsSavingProfile(true);
     if (tg) tg.HapticFeedback?.notificationOccurred('success');
@@ -882,7 +915,7 @@ const ActivityTracker = () => {
     try {
       if (isAuthenticated) {
         const { data, error } = await supabaseModule.babyHelpers.upsertProfile({
-          name: profileForm.name,
+          name: profileForm.name.trim(),
           birthDate: profileForm.birthDate,
           photo: profileForm.photo,
         });
@@ -893,8 +926,12 @@ const ActivityTracker = () => {
           photo: data.photo_url || null,
         });
       } else {
-        setBabyProfile(profileForm);
-        await cacheService.set('baby_profile', profileForm, CACHE_TTL_SECONDS);
+        const trimmedProfile = {
+          ...profileForm,
+          name: profileForm.name.trim(),
+        };
+        setBabyProfile(trimmedProfile);
+        await cacheService.set('baby_profile', trimmedProfile, CACHE_TTL_SECONDS);
       }
       setView('main');
     } catch (error) {
@@ -1436,6 +1473,65 @@ const ActivityTracker = () => {
                 <label className="block mb-2 font-medium">Комментарий:</label>
                 <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder="Добавьте заметку..." />
               </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'onboarding') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+        <div className="h-16" />
+
+        <div className="max-w-2xl mx-auto px-4">
+          <div className="mb-4 bg-white rounded-2xl shadow-lg p-6">
+            <div className="flex items-center gap-2 mb-3">
+              <Baby className="w-6 h-6 text-purple-600" />
+              <h2 className="text-xl font-semibold">Добро пожаловать!</h2>
+            </div>
+            <p className="text-gray-600">
+              Чтобы начать вести активности, добавьте данные малыша.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-lg p-6">
+            <h3 className="text-lg font-semibold mb-4">Данные малыша</h3>
+            <div className="space-y-4">
+              <div>
+                <label className="block mb-2 font-medium">Имя малыша:</label>
+                <input
+                  type="text"
+                  className="w-full border-2 border-gray-200 rounded-lg p-3"
+                  value={profileForm.name}
+                  onChange={(e) => setProfileForm(prev => ({ ...prev, name: e.target.value }))}
+                  placeholder="Введите имя"
+                />
+              </div>
+              <div>
+                <label className="block mb-2 font-medium">Дата рождения:</label>
+                <input
+                  type="date"
+                  className="w-full border-2 border-gray-200 rounded-lg p-3"
+                  value={profileForm.birthDate}
+                  onChange={(e) => setProfileForm(prev => ({ ...prev, birthDate: e.target.value }))}
+                />
+                {profileForm.birthDate && (
+                  <div className="mt-2 text-sm text-gray-600">
+                    Возраст: {calculateAge(profileForm.birthDate)}
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={saveProfile}
+                disabled={isSavingProfile}
+                className={`w-full bg-purple-600 text-white py-3 rounded-lg font-medium transition-all ${
+                  isSavingProfile ? 'opacity-50 cursor-not-allowed' : 'active:scale-95'
+                }`}
+              >
+                {isSavingProfile ? 'Сохранение...' : 'Продолжить'}
+              </button>
             </div>
           </div>
         </div>
