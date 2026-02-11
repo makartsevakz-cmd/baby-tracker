@@ -187,16 +187,21 @@ async function checkIntervalNotification(notification, now, userId) {
       return { shouldSend: false };
     }
 
-    const lastTime = new Date(lastActivity.end_time || lastActivity.start_time);
+    const lastActivityTime = lastActivity.end_time || lastActivity.start_time;
+    const lastTime = new Date(lastActivityTime);
     const diffMinutes = (now - lastTime) / (1000 * 60);
 
     console.log(`📊 Интервал для ${notification.activity_type}: прошло ${diffMinutes.toFixed(1)} мин из ${intervalMinutes} мин`);
 
-    // Отправляем когда интервал пройден
+    // Отправляем когда интервал пройден.
+    // ВАЖНО: уведомление должно уйти только 1 раз для конкретной последней активности,
+    // поэтому ключ дедупликации привязываем к самой активности, а не к каждой минуте проверки.
     const shouldSend = diffMinutes >= intervalMinutes;
-    const intervalWindow = shouldSend ? Math.floor(diffMinutes / intervalMinutes) : null;
+    const triggerKey = shouldSend
+      ? `activity-${lastActivity.id || String(lastActivityTime)}`
+      : null;
 
-    return { shouldSend, intervalWindow, diffMinutes: diffMinutes.toFixed(1) };
+    return { shouldSend, triggerKey, diffMinutes: diffMinutes.toFixed(1) };
   } catch (error) {
     console.error('Error checking interval notification:', error);
     return { shouldSend: false };
@@ -294,7 +299,7 @@ async function checkAndSendNotifications() {
             console.log(`⏱️ INTERVAL: Отправка уведомления "${notification.title}" (ID: ${notification.id})`);
             console.log(`   Прошло ${result.diffMinutes} мин из ${notification.interval_minutes} мин`);
             
-            const intervalKey = `${currentMinute}-window-${result.intervalWindow}`;
+            const intervalKey = result.triggerKey;
             const customMessage = `
 🔔 Напоминание: ${notification.title || 'Уведомление'}
 
