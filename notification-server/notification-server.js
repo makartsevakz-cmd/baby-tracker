@@ -17,9 +17,9 @@ app.use(express.json());
 // Инициализация Firebase Admin SDK
 let firebaseInitialized = false;
 try {
-  const serviceAccount = JSON.parse(
-    readFileSync('./firebase-admin-key.json', 'utf8')
-  );
+  const serviceAccount = process.env.FIREBASE_ADMIN_KEY_BASE64
+  ? JSON.parse(Buffer.from(process.env.FIREBASE_ADMIN_KEY_BASE64, 'base64').toString('utf8'))
+  : JSON.parse(readFileSync('./firebase-admin-key.json', 'utf8'));
   admin.initializeApp({
     credential: admin.credential.cert(serviceAccount),
     projectId: serviceAccount.project_id
