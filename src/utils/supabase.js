@@ -30,10 +30,19 @@ const isUserAlreadyExistsError = (error) =>
 
 const getTelegramUserId = (telegramUser) => String(telegramUser?.id || '');
 const getSessionTelegramId = (user) => String(user?.user_metadata?.telegram_id || '');
+const getSessionEmail = (user) => String(user?.email || '').toLowerCase();
 const isSessionMatchingTelegramUser = (user, telegramUser) => {
   const telegramUserId = getTelegramUserId(telegramUser);
   if (!telegramUserId) return true;
-  return getSessionTelegramId(user) === telegramUserId;
+
+  const sessionTelegramId = getSessionTelegramId(user);
+  if (sessionTelegramId && sessionTelegramId === telegramUserId) {
+    return true;
+  }
+
+  // Backward compatibility: old Telegram users may not have telegram_id in metadata,
+  // but they still have a deterministic Telegram email.
+  return getSessionEmail(user) === buildTelegramEmail(telegramUserId);
 };
 
 // Authentication helpers
@@ -121,6 +130,12 @@ export const authHelpers = {
   async ensureAuthenticatedSession({ telegramUser } = {}) {
     if (telegramUser) {
       const existingUser = await this.getCurrentUser();
+
+      // Keep a valid Telegram-bound session to avoid unnecessary re-auth and
+      // accidental fallback to a fresh anonymous account.
+      if (existingUser && isSessionMatchingTelegramUser(existingUser, telegramUser)) {
+        return { user: existingUser, mode: 'session', error: null };
+      }
 
       if (existingUser && !isSessionMatchingTelegramUser(existingUser, telegramUser)) {
         console.warn('Telegram account switched: clearing mismatched Supabase session', {
