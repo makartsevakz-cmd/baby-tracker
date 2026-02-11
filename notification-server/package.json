@@ -1,6 +1,7 @@
 {
   "name": "baby-tracker-notifications",
   "version": "1.0.0",
+  "type": "module",
   "description": "Notification service for Baby Tracker",
   "main": "notification-server.js",
   "scripts": {

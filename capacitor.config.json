@@ -4,8 +4,7 @@
   "webDir": "dist",
   "server": {
     "cleartext": true,
-    "androidScheme": "https",
-    "url": "https://baby-tracker-ecru.vercel.app/"
+    "androidScheme": "https"
   },
   "plugins": {
     "PushNotifications": {

@@ -8,3 +8,5 @@ notification-server/firebase-admin-key.json
 notification-server/firebase-admin-key.json.json
 my-release-key.keystore
 firebase-admin-key.json
+logs.txt
+notification-server/.env

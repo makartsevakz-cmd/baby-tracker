@@ -4,7 +4,10 @@
  */
 export const Platform = {
   isTelegram: () => {
-    return typeof window !== 'undefined' && window.Telegram?.WebApp !== undefined;
+    if (typeof window === 'undefined') return false;
+    // ВАЖНО: Если есть Capacitor - это Android app, НЕ Telegram WebApp
+    if (window.Capacitor) return false;
+    return window.Telegram?.WebApp !== undefined;
   },
   
   isAndroid: () => {
@@ -29,7 +32,12 @@ export const Platform = {
 
 // Мок Capacitor для браузерного тестирования
 export const mockCapacitor = () => {
-  if (typeof window === 'undefined' || window.Capacitor) return;
+  // Не мокаем если уже есть настоящий Capacitor
+  if (typeof window === 'undefined') return;
+  if (window.Capacitor && window.Capacitor.isNativePlatform) {
+    console.log('✅ Real Capacitor detected, skipping mock');
+    return;
+  }
   
   console.log('🔧 Initializing Capacitor mock for browser testing');
   

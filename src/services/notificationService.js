@@ -10,7 +10,10 @@ class NotificationService {
   }
 
   async initialize() {
-    if (this.initialized) return;
+    if (this.initialized) {
+      console.log('⚠️ Notifications already initialized');
+      return;
+    }
 
     console.log(`🔔 Initializing notifications for ${this.platform}`);
 
@@ -23,21 +26,24 @@ class NotificationService {
 
     if (this.platform === 'android') {
       await this.initializeAndroidNotifications();
+      this.initialized = true;
     }
-
-    this.initialized = true;
   }
 
   async initializeAndroidNotifications() {
     try {
-      // Динамический импорт Capacitor плагинов
-      const pushNotificationsModuleName = '@capacitor/push-notifications';
-      const localNotificationsModuleName = '@capacitor/local-notifications';
-      const { PushNotifications } = await import(/* @vite-ignore */ pushNotificationsModuleName);
-      const { LocalNotifications } = await import(/* @vite-ignore */ localNotificationsModuleName);
+      console.log('📱 Starting Android notification setup...');
+      
+      // ИСПРАВЛЕНО: Статический импорт вместо динамического
+      const { PushNotifications } = await import('@capacitor/push-notifications');
+      const { LocalNotifications } = await import('@capacitor/local-notifications');
+
+      console.log('✅ Capacitor plugins loaded');
 
       // Запрашиваем разрешения
+      console.log('🔐 Requesting permissions...');
       const permResult = await PushNotifications.requestPermissions();
+      console.log('🔐 Permission result:', permResult);
       
       if (permResult.receive !== 'granted') {
         console.warn('⚠️ Push notification permission denied');
@@ -45,6 +51,7 @@ class NotificationService {
       }
 
       // Регистрируем устройство
+      console.log('📝 Registering for push notifications...');
       await PushNotifications.register();
 
       // Слушаем токен
@@ -63,43 +70,53 @@ class NotificationService {
 
       // Обработка уведомлений когда приложение открыто
       PushNotifications.addListener('pushNotificationReceived', async (notification) => {
-        console.log('🔔 Push notification received:', notification);
+        console.log('📬 Push notification received (foreground):', notification);
 
         // Показываем локальное уведомление
-        await LocalNotifications.schedule({
-          notifications: [{
-            title: notification.title || 'Baby Tracker',
-            body: notification.body || '',
-            id: Date.now(),
-            schedule: { at: new Date(Date.now() + 100) },
-            sound: 'default',
-            smallIcon: 'ic_stat_icon_config_sample',
-            iconColor: '#9333EA'
-          }]
-        });
+        try {
+          await LocalNotifications.schedule({
+            notifications: [{
+              title: notification.title || 'Дневник малыша',
+              body: notification.body || '',
+              id: Date.now(),
+              schedule: { at: new Date(Date.now() + 100) },
+              sound: 'default',
+              smallIcon: 'ic_stat_icon_config_sample',
+              iconColor: '#9333EA'
+            }]
+          });
+          console.log('✅ Local notification scheduled');
+        } catch (err) {
+          console.error('❌ Failed to schedule local notification:', err);
+        }
       });
 
       // Обработка нажатия на уведомление
       PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
-        console.log('🔔 Notification action:', notification);
+        console.log('👆 Notification action performed:', notification);
         // Здесь можно добавить навигацию к конкретному экрану
       });
 
-      console.log('✅ Android push notifications initialized');
+      console.log('✅ Android push notifications initialized successfully');
     } catch (error) {
-      console.error('Android notification init error:', error);
+      console.error('💥 Android notification init error:', error);
+      console.error('Error details:', error.message, error.stack);
     }
   }
 
   async saveFCMToken(token) {
     try {
+      console.log('💾 Saving FCM token to Supabase...');
+      
       const user = await supabaseModule.authHelpers.getCurrentUser();
       if (!user) {
-        console.warn('No user to save FCM token for');
+        console.warn('⚠️ No user to save FCM token for');
         return;
       }
 
-      const { error } = await supabaseModule.supabase
+      console.log('👤 User ID:', user.id);
+
+      const { data, error } = await supabaseModule.supabase
         .from('device_tokens')
         .upsert({
           user_id: user.id,
@@ -108,25 +125,59 @@ class NotificationService {
           updated_at: new Date().toISOString()
         }, {
           onConflict: 'user_id,token'
-        });
+        })
+        .select();
 
       if (error) {
-        console.error('Failed to save FCM token:', error);
-      } else {
-        console.log('✅ FCM token saved to Supabase');
+        console.error('❌ Failed to save FCM token:', error);
+        throw error;
       }
+
+      console.log('✅ FCM token saved to Supabase:', data);
     } catch (error) {
-      console.error('Save FCM token error:', error);
+      console.error('💥 Save FCM token error:', error);
     }
   }
 
   async requestPermissions() {
     if (this.platform === 'android') {
-      const pushNotificationsModuleName = '@capacitor/push-notifications';
-      const { PushNotifications } = await import(/* @vite-ignore */ pushNotificationsModuleName);
-      return await PushNotifications.requestPermissions();
+      try {
+        const { PushNotifications } = await import('@capacitor/push-notifications');
+        return await PushNotifications.requestPermissions();
+      } catch (error) {
+        console.error('Failed to request permissions:', error);
+        return { receive: 'denied' };
+      }
     }
     return { receive: 'granted' };
+  }
+
+  // Отправить тестовое уведомление (для отладки)
+  async sendTestNotification() {
+    if (this.platform !== 'android') {
+      console.warn('⚠️ Test notifications only available on Android');
+      return;
+    }
+
+    try {
+      const { LocalNotifications } = await import('@capacitor/local-notifications');
+      
+      await LocalNotifications.schedule({
+        notifications: [{
+          title: 'Тестовое уведомление',
+          body: 'Если вы видите это - уведомления работают! 🎉',
+          id: Date.now(),
+          schedule: { at: new Date(Date.now() + 1000) },
+          sound: 'default',
+          smallIcon: 'ic_stat_icon_config_sample',
+          iconColor: '#9333EA'
+        }]
+      });
+
+      console.log('✅ Test notification sent');
+    } catch (error) {
+      console.error('❌ Failed to send test notification:', error);
+    }
   }
 }
 

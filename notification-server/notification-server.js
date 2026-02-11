@@ -2,11 +2,14 @@
 // Серверный код для отправки уведомлений через Telegram Bot и Android FCM
 // Развертывание: Vercel, Railway, Heroku, или ваш VPS
 
-require('dotenv').config();
-const admin = require('firebase-admin');
-const express = require('express');
-const cron = require('node-cron');
-const { createClient } = require('@supabase/supabase-js');
+import dotenv from 'dotenv';
+import admin from 'firebase-admin';
+import express from 'express';
+import cron from 'node-cron';
+import { createClient } from '@supabase/supabase-js';
+import { readFileSync } from 'fs';
+
+dotenv.config();
 
 const app = express();
 app.use(express.json());
@@ -14,12 +17,16 @@ app.use(express.json());
 // Инициализация Firebase Admin SDK
 let firebaseInitialized = false;
 try {
-  const serviceAccount = require('./firebase-admin-key.json');
+  const serviceAccount = JSON.parse(
+    readFileSync('./firebase-admin-key.json', 'utf8')
+  );
   admin.initializeApp({
-    credential: admin.credential.cert(serviceAccount)
+    credential: admin.credential.cert(serviceAccount),
+    projectId: serviceAccount.project_id
   });
   firebaseInitialized = true;
   console.log('✅ Firebase Admin SDK initialized');
+  console.log(`📦 Project ID: ${serviceAccount.project_id}`);
 } catch (error) {
   console.warn('⚠️ Firebase Admin SDK not initialized:', error.message);
   console.warn('Android push notifications will not work');
@@ -232,55 +239,68 @@ async function sendNotification(userId, title, message) {
     
     // Отправляем в Android если есть токены и Firebase настроен
     if (firebaseInitialized && deviceTokens && deviceTokens.length > 0) {
-      try {
-        const tokens = deviceTokens
-          .filter(t => t.platform === 'android')
-          .map(t => t.token);
+      const androidTokens = deviceTokens.filter(t => t.platform === 'android');
+      
+      if (androidTokens.length > 0) {
+        console.log(`📱 Sending to ${androidTokens.length} Android device(s)...`);
         
-        if (tokens.length > 0) {
-          const androidResult = await admin.messaging().sendMulticast({
-            tokens,
-            notification: {
-              title: title || 'Baby Tracker',
-              body: message
-            },
-            android: {
-              priority: 'high',
+        let successCount = 0;
+        let failureCount = 0;
+        const failedTokens = [];
+        
+        // Отправляем каждому токену отдельно (HTTP v1 API)
+        for (const tokenObj of androidTokens) {
+          try {
+            const notificationMessage = {
+              token: tokenObj.token,
               notification: {
-                sound: 'default'
+                title: title || 'Дневник малыша',
+                body: message
+              },
+              android: {
+                priority: 'high',
+                notification: {
+                  sound: 'default',
+                  channelId: 'default'
+                }
               }
-            }
-          });
-          
-          results.android = {
-            success: androidResult.successCount > 0,
-            successCount: androidResult.successCount,
-            failureCount: androidResult.failureCount
-          };
-          
-          console.log(`📱 Android notifications sent: ${androidResult.successCount}/${tokens.length}`);
-          
-          // Удаляем невалидные токены
-          if (androidResult.failureCount > 0) {
-            const failedTokens = [];
-            androidResult.responses.forEach((resp, idx) => {
-              if (!resp.success) {
-                failedTokens.push(tokens[idx]);
-              }
-            });
+            };
             
-            if (failedTokens.length > 0) {
-              await supabase
-                .from('device_tokens')
-                .delete()
-                .in('token', failedTokens);
-              console.log(`🗑️  Removed ${failedTokens.length} invalid tokens`);
+            await admin.messaging().send(notificationMessage);
+            console.log(`✅ Sent to token ${tokenObj.token.substring(0, 20)}...`);
+            successCount++;
+          } catch (error) {
+            console.error(`❌ Failed to send to token ${tokenObj.token.substring(0, 20)}...: ${error.message}`);
+            failureCount++;
+            
+            // Если токен невалидный - добавляем в список для удаления
+            if (error.code === 'messaging/invalid-registration-token' || 
+                error.code === 'messaging/registration-token-not-registered') {
+              failedTokens.push(tokenObj.token);
             }
           }
         }
-      } catch (error) {
-        console.error('Android send error:', error);
-        results.android = { success: false, error: error.message };
+        
+        console.log(`📊 Android results: ${successCount} success, ${failureCount} failed`);
+        
+        // Удаляем невалидные токены
+        if (failedTokens.length > 0) {
+          try {
+            await supabase
+              .from('device_tokens')
+              .delete()
+              .in('token', failedTokens);
+            console.log(`🗑️  Removed ${failedTokens.length} invalid token(s)`);
+          } catch (error) {
+            console.error('Failed to remove invalid tokens:', error);
+          }
+        }
+        
+        results.android = {
+          success: successCount > 0,
+          successCount,
+          failureCount
+        };
       }
     }
     
