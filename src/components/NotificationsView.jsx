@@ -2,6 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { Bell, Plus, Edit2, Trash2, Clock, Calendar, RefreshCw, ArrowLeft, X } from 'lucide-react';
 import cacheService, { CACHE_TTL_SECONDS } from '../services/cacheService.js';
+import { Platform } from '../utils/platform.js';
 
 const NotificationsView = ({ 
   tg, 
@@ -10,20 +11,29 @@ const NotificationsView = ({
   notificationHelpers,
   isAuthenticated 
 }) => {
-  const [notifications, setNotifications] = useState([]);
-  const [showForm, setShowForm] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [isSaving, setIsSaving] = useState(false); // Prevent double saves
-  const [formData, setFormData] = useState({
+  const getCurrentLocalTime = () => {
+    const now = new Date();
+    return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+  };
+
+  const getDefaultFormData = () => ({
     activityType: 'breastfeeding',
     notificationType: 'time',
     enabled: true,
-    notificationTime: '09:00',
+    notificationTime: getCurrentLocalTime(),
     repeatDays: [0, 1, 2, 3, 4, 5, 6],
     intervalMinutes: 180,
     title: '',
     message: '',
   });
+
+  const isAndroid = Platform.isAndroid();
+
+  const [notifications, setNotifications] = useState([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [isSaving, setIsSaving] = useState(false); // Prevent double saves
+  const [formData, setFormData] = useState(() => getDefaultFormData());
 
   const daysOfWeek = [
     { value: 0, label: 'Вс' },
@@ -186,7 +196,7 @@ const NotificationsView = ({
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     setEditingId(notification.id);
 
-    const rawTime = notification.notification_time || notification.notificationTime || '09:00';
+    const rawTime = notification.notification_time || notification.notificationTime || getCurrentLocalTime();
     const rawDays = notification.repeat_days || notification.repeatDays || [0, 1, 2, 3, 4, 5, 6];
 
     // Переводим UTC обратно в локальное время для отображения
@@ -210,16 +220,7 @@ const NotificationsView = ({
   const resetForm = () => {
     setShowForm(false);
     setEditingId(null);
-    setFormData({
-      activityType: 'breastfeeding',
-      notificationType: 'time',
-      enabled: true,
-      notificationTime: '09:00',
-      repeatDays: [0, 1, 2, 3, 4, 5, 6],
-      intervalMinutes: 180,
-      title: '',
-      message: '',
-    });
+    setFormData(getDefaultFormData());
   };
 
   const toggleDay = (day) => {
@@ -479,6 +480,7 @@ const NotificationsView = ({
           <button
             onClick={() => {
               if (tg) tg.HapticFeedback?.impactOccurred('light');
+              setFormData(getDefaultFormData());
               setShowForm(true);
             }}
             className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
@@ -492,11 +494,20 @@ const NotificationsView = ({
           <div className="flex items-start">
             <Bell className="w-5 h-5 text-blue-600 mr-3 mt-0.5 flex-shrink-0" />
             <div className="text-sm text-blue-900">
-              <p className="font-medium mb-1">Уведомления приходят в Telegram бот</p>
-              <p className="text-blue-700">
-                Настройте напоминания по времени или интервалам после активности. 
-                Бот отправит сообщение в ваш чат.
+              <p className="font-medium mb-1">
+                {isAndroid ? 'Уведомления приходят как push-сообщения' : 'Уведомления приходят в Telegram бот'}
               </p>
+              {isAndroid ? (
+                <p className="text-blue-700">
+                  Настройте напоминания по времени или интервалам после активности.
+                  Приложение отправит push-уведомление на ваше устройство.
+                </p>
+              ) : (
+                <p className="text-blue-700">
+                  Настройте напоминания по времени или интервалам после активности. 
+                  Бот отправит сообщение в ваш чат.
+                </p>
+              )}
             </div>
           </div>
         </div>
