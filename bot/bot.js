@@ -77,6 +77,53 @@ function releaseLock(notificationId, scheduledMinute) {
   }, 120000);
 }
 
+// ========================================
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РЕГИСТРАЦИИ
+// ========================================
+
+const formatPhone = (phone) => {
+  let cleaned = phone.replace(/[^\d+]/g, '');
+  if (cleaned.startsWith('8')) {
+    cleaned = '+7' + cleaned.slice(1);
+  }
+  if (cleaned.startsWith('7') && !cleaned.startsWith('+')) {
+    cleaned = '+' + cleaned;
+  }
+  if (!cleaned.startsWith('+')) {
+    cleaned = '+7' + cleaned;
+  }
+  return cleaned;
+};
+
+const phoneToEmail = (phone) => {
+  const cleaned = formatPhone(phone).replace(/\+/g, '');
+  return `${cleaned}@babydiary.local`;
+};
+
+async function isUserRegistered(telegramUserId) {
+  if (!supabase) return { registered: false, authUserId: null };
+  
+  try {
+    const { data, error } = await supabase
+      .from('user_telegram_mapping')
+      .select('auth_user_id')
+      .eq('user_id', telegramUserId)
+      .single();
+
+    if (error || !data?.auth_user_id) {
+      return { registered: false, authUserId: null };
+    }
+
+    return { registered: true, authUserId: data.auth_user_id };
+  } catch (error) {
+    console.error('Error checking registration:', error);
+    return { registered: false, authUserId: null };
+  }
+}
+
+// Состояние регистрации (в памяти)
+const registrationStates = new Map();
+
 async function sendNotificationSafe(chatId, notification, scheduledMinute, customMessage = null) {
   try {
     const acquired = await tryAcquireLock(notification.id, scheduledMinute);
@@ -807,6 +854,30 @@ bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const telegramUserId = msg.from.id;
 
+  console.log('📱 /start from:', telegramUserId);
+
+  // НОВАЯ ЛОГИКА: Проверка регистрации
+  const { registered } = await isUserRegistered(telegramUserId);
+
+  if (!registered) {
+    await bot.sendMessage(chatId, 
+      '👋 Добро пожаловать в Дневник малыша!\n\n' +
+      'Для начала работы вам нужно зарегистрироваться.\n\n' +
+      '🔐 Используйте команду /register для регистрации\n' +
+      'или откройте приложение:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+            [{ text: '🔐 Регистрация через бот', callback_data: 'start_registration' }]
+          ]
+        }
+      }
+    );
+    return;
+  }
+
+  // СУЩЕСТВУЮЩАЯ ЛОГИКА: Сохранение chat_id
   if (supabase) {
     try {
       await supabase
@@ -880,8 +951,90 @@ bot.onText(/\/help/, (msg) => {
   });
 });
 
+// ========================================
+// КОМАНДА РЕГИСТРАЦИИ
+// ========================================
+
+bot.onText(/\/register/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramUserId = msg.from.id;
+
+  const { registered } = await isUserRegistered(telegramUserId);
+
+  if (registered) {
+    await bot.sendMessage(chatId, '✅ Вы уже зарегистрированы!');
+    return;
+  }
+
+  registrationStates.set(telegramUserId, { 
+    step: 'awaiting_phone',
+    username: msg.from.username 
+  });
+
+  await bot.sendMessage(chatId,
+    '📱 Регистрация\n\n' +
+    'Шаг 1/3: Введите ваш номер телефона\n' +
+    'Формат: +7 999 123 45 67\n\n' +
+    'Или отмените: /cancel'
+  );
+});
+
+bot.onText(/\/cancel/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramUserId = msg.from.id;
+  
+  registrationStates.delete(telegramUserId);
+  await bot.sendMessage(chatId, '❌ Регистрация отменена.');
+});
+
+bot.onText(/\/skip/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramUserId = msg.from.id;
+  
+  const state = registrationStates.get(telegramUserId);
+  
+  if (state && state.step === 'awaiting_name') {
+    state.fullName = '';
+    await completeRegistration(chatId, telegramUserId, state);
+  }
+});
+
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
+
+  // НОВАЯ ЛОГИКА: Обработка кнопки регистрации
+  if (query.data === 'start_registration') {
+    const telegramUserId = query.from.id;
+    
+    registrationStates.set(telegramUserId, { 
+      step: 'awaiting_phone',
+      username: query.from.username 
+    });
+    
+    await bot.sendMessage(chatId,
+      '📱 Регистрация\n\n' +
+      'Шаг 1/3: Введите ваш номер телефона\n' +
+      'Формат: +7 999 123 45 67\n\n' +
+      'Или отмените: /cancel'
+    );
+    
+    await bot.answerCallbackQuery(query.id);
+    return;
+  }
+
+  // ДОБАВИТЬ ПРОВЕРКУ РЕГИСТРАЦИИ для остальных команд
+  const telegramUserId = query.from.id;
+  const { registered } = await isUserRegistered(telegramUserId);
+  
+  if (!registered && !query.data?.startsWith('qa:cancel') && !query.data?.startsWith('qa:home')) {
+    await bot.answerCallbackQuery(query.id, {
+      text: '⚠️ Сначала зарегистрируйтесь!',
+      show_alert: true
+    });
+    return;
+  }
+
+  // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД
 
   if (query.data?.startsWith('qa:')) {
     await bot.answerCallbackQuery(query.id);
@@ -991,9 +1144,69 @@ bot.on('callback_query', async (query) => {
 });
 
 bot.on('message', async (msg) => {
+  // НОВАЯ ЛОГИКА: Обработка регистрации
+  const text = msg.text;
+  const telegramUserId = msg.from.id;
+  const chatId = msg.chat.id;
+  
+  const state = registrationStates.get(telegramUserId);
+  if (state && text && !text.startsWith('/')) {
+    try {
+      // ШАГ 1: Ввод телефона
+      if (state.step === 'awaiting_phone') {
+        const phone = formatPhone(text);
+        
+        if (phone.length < 12) {
+          await bot.sendMessage(chatId, '❌ Некорректный номер. Попробуйте ещё раз:');
+          return;
+        }
+
+        state.phone = phone;
+        state.step = 'awaiting_password';
+        registrationStates.set(telegramUserId, state);
+
+        await bot.sendMessage(chatId,
+          '✅ Номер принят: ' + phone + '\n\n' +
+          'Шаг 2/3: Придумайте пароль (минимум 6 символов)'
+        );
+        return;
+      }
+
+      // ШАГ 2: Ввод пароля
+      if (state.step === 'awaiting_password') {
+        if (text.length < 6) {
+          await bot.sendMessage(chatId, '❌ Пароль слишком короткий. Минимум 6 символов:');
+          return;
+        }
+
+        state.password = text;
+        state.step = 'awaiting_name';
+        registrationStates.set(telegramUserId, state);
+
+        await bot.sendMessage(chatId,
+          '✅ Пароль принят\n\n' +
+          'Шаг 3/3: Введите ваше имя (или нажмите /skip)'
+        );
+        return;
+      }
+
+      // ШАГ 3: Ввод имени
+      if (state.step === 'awaiting_name') {
+        state.fullName = text;
+        await completeRegistration(chatId, telegramUserId, state);
+        return;
+      }
+    } catch (error) {
+      console.error('Error in registration flow:', error);
+      await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте ещё раз: /register');
+      registrationStates.delete(telegramUserId);
+      return;
+    }
+  }
+
+  // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД bot.on('message')
   if (msg.text && msg.text.startsWith('/')) return;
   
-  const chatId = msg.chat.id;
   const session = getSession(chatId);
   const context = session.context || await getContext(msg);
   session.context = context;
@@ -1077,6 +1290,103 @@ bot.on('message', async (msg) => {
     reply_markup: getMainMenuKeyboard(),
   });
 });
+
+// ========================================
+// ФУНКЦИЯ ЗАВЕРШЕНИЯ РЕГИСТРАЦИИ
+// ========================================
+
+async function completeRegistration(chatId, telegramUserId, state) {
+  if (!supabase) {
+    await bot.sendMessage(chatId, '❌ Supabase не настроен. Регистрация невозможна.');
+    registrationStates.delete(telegramUserId);
+    return;
+  }
+
+  try {
+    await bot.sendMessage(chatId, '⏳ Создаём ваш аккаунт...');
+
+    const { phone, password, fullName = '', username } = state;
+    const email = phoneToEmail(phone);
+
+    console.log('📱 Регистрация:', { phone, email });
+
+    // Создаём пользователя через Supabase Auth (service key!)
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: email,
+      password: password,
+      email_confirm: true,
+      user_metadata: {
+        phone: phone,
+        full_name: fullName,
+        auth_method: 'phone',
+      }
+    });
+
+    if (authError) {
+      console.error('Auth error:', authError);
+      
+      if (authError.message.includes('already registered')) {
+        await bot.sendMessage(chatId, 
+          '❌ Этот номер уже зарегистрирован.\n\n' +
+          'Используйте приложение для входа.'
+        );
+      } else {
+        await bot.sendMessage(chatId, '❌ Ошибка регистрации: ' + authError.message);
+      }
+      
+      registrationStates.delete(telegramUserId);
+      return;
+    }
+
+    const authUserId = authData.user.id;
+
+    // Создаём профиль в user_profiles
+    const { error: profileError } = await supabase
+      .from('user_profiles')
+      .insert({
+        id: authUserId,
+        phone: phone,
+        full_name: fullName,
+      });
+
+    if (profileError) {
+      console.error('Profile error:', profileError);
+    }
+
+    // Связываем Telegram аккаунт
+    const { error: mappingError } = await supabase
+      .from('user_telegram_mapping')
+      .insert({
+        user_id: telegramUserId,
+        chat_id: chatId,
+        username: username,
+        auth_user_id: authUserId,
+      });
+
+    if (mappingError) {
+      console.error('Mapping error:', mappingError);
+    }
+
+    registrationStates.delete(telegramUserId);
+
+    await bot.sendMessage(chatId,
+      '✅ Регистрация завершена!\n\n' +
+      '📱 Теперь откройте приложение и добавьте профиль малыша:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]
+          ]
+        }
+      }
+    );
+
+  } catch (error) {
+    console.error('Registration error:', error);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');
+    registrationStates.delete(telegramUserId);
+  }
+}
 
 // ============================================
 // Health Check

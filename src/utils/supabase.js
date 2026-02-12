@@ -13,6 +13,10 @@ export const isSupabaseConfigured =
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// ========================================
+// СТАРЫЕ ФУНКЦИИ (для Telegram)
+// ========================================
+
 const buildTelegramEmail = (telegramUserId) => `telegram_${telegramUserId}@temp.com`;
 const buildTelegramPassword = (telegramUserId) => `telegram_${telegramUserId}_auth`;
 const isInvalidCredentialsError = (error) =>
@@ -26,7 +30,6 @@ const isUserAlreadyExistsError = (error) =>
     error &&
     (error.message?.includes('User already registered') || error.code === 'user_already_exists')
   );
-
 
 const getTelegramUserId = (telegramUser) => String(telegramUser?.id || '');
 const getSessionTelegramId = (user) => String(user?.user_metadata?.telegram_id || '');
@@ -45,51 +48,263 @@ const isSessionMatchingTelegramUser = (user, telegramUser) => {
   return getSessionEmail(user) === buildTelegramEmail(telegramUserId);
 };
 
-// Authentication helpers
-export const authHelpers = {
-  // Sign in with Telegram user data
-  async signInWithTelegram(telegramUser) {
-  try {
-    // Use Telegram user ID as unique identifier
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: buildTelegramEmail(telegramUser.id),
-      password: buildTelegramPassword(telegramUser.id),
-    });
+// ========================================
+// НОВЫЕ ФУНКЦИИ (для Phone Auth)
+// ========================================
 
-    if (isInvalidCredentialsError(error)) {
-      // User doesn't exist, create account
-      return await this.signUpWithTelegram(telegramUser);
-    }
-
-    if (error) throw error;
-
-    // ✅ КРИТИЧЕСКИ ВАЖНО: Обновить telegram_id если его нет в метаданных
-    // Это исправляет существующих пользователей, у которых не был сохранён telegram_id
-    if (data?.user && !data.user.user_metadata?.telegram_id) {
-      console.log('🔧 Updating missing telegram_id for user:', data.user.id);
-      
-      const { error: updateError } = await supabase.auth.updateUser({
-        data: {
-          telegram_id: telegramUser.id,
-          first_name: telegramUser.first_name,
-          last_name: telegramUser.last_name,
-          username: telegramUser.username,
-        }
-      });
-      
-      if (updateError) {
-        console.error('Failed to update telegram_id:', updateError);
-      } else {
-        console.log('✅ telegram_id updated successfully');
-      }
-    }
-
-    return { data, error: null };
-  } catch (error) {
-    console.error('Sign in error:', error);
-    return { data: null, error };
+/**
+ * Форматирование номера телефона
+ * Приводит к формату: +79991234567
+ */
+const formatPhone = (phone) => {
+  let cleaned = phone.replace(/[^\d+]/g, '');
+  
+  if (cleaned.startsWith('8')) {
+    cleaned = '+7' + cleaned.slice(1);
   }
-},
+  
+  if (cleaned.startsWith('7') && !cleaned.startsWith('+')) {
+    cleaned = '+' + cleaned;
+  }
+  
+  if (!cleaned.startsWith('+')) {
+    cleaned = '+7' + cleaned;
+  }
+  
+  return cleaned;
+};
+
+/**
+ * Генерация email для phone auth
+ */
+const phoneToEmail = (phone) => {
+  const cleaned = formatPhone(phone).replace(/\+/g, '');
+  return `${cleaned}@babydiary.local`;
+};
+
+// ========================================
+// AUTH HELPERS - ОБНОВЛЁННАЯ ВЕРСИЯ
+// ========================================
+
+export const authHelpers = {
+  // ========================================
+  // НОВЫЕ МЕТОДЫ: Phone Auth
+  // ========================================
+
+  /**
+   * Регистрация через телефон и пароль
+   */
+  async signUpWithPhone(phone, password, fullName = '') {
+    try {
+      const formattedPhone = formatPhone(phone);
+      const email = phoneToEmail(formattedPhone);
+
+      console.log('📱 Регистрация:', { phone: formattedPhone, email });
+
+      const { data, error } = await supabase.auth.signUp({
+        email: email,
+        password: password,
+        options: {
+          data: {
+            phone: formattedPhone,
+            full_name: fullName,
+            auth_method: 'phone',
+          },
+          emailRedirectTo: undefined,
+        },
+      });
+
+      if (error) throw error;
+
+      // Создаём профиль в user_profiles (если не создался триггером)
+      if (data?.user) {
+        await this._ensureUserProfile(data.user.id, formattedPhone, fullName);
+      }
+
+      console.log('✅ Регистрация успешна:', data);
+      return { data, error: null };
+    } catch (error) {
+      console.error('❌ Ошибка регистрации:', error);
+      return { data: null, error };
+    }
+  },
+
+  /**
+   * Вход через телефон и пароль
+   */
+  async signInWithPhone(phone, password) {
+    try {
+      const formattedPhone = formatPhone(phone);
+      const email = phoneToEmail(formattedPhone);
+
+      console.log('🔐 Вход:', { phone: formattedPhone, email });
+
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: password,
+      });
+
+      if (error) throw error;
+
+      console.log('✅ Вход успешен:', data);
+      return { data, error: null };
+    } catch (error) {
+      console.error('❌ Ошибка входа:', error);
+      return { data: null, error };
+    }
+  },
+
+  /**
+   * Привязка Telegram аккаунта к существующему пользователю
+   */
+  async linkTelegramAccount(telegramUser) {
+    try {
+      const user = await this.getCurrentUser();
+      if (!user) {
+        throw new Error('Пользователь не авторизован');
+      }
+
+      console.log('🔗 Привязка Telegram:', {
+        userId: user.id,
+        telegramId: telegramUser.id,
+      });
+
+      // Проверяем, не привязан ли уже этот Telegram аккаунт
+      const { data: existing } = await supabase
+        .from('user_telegram_mapping')
+        .select('*')
+        .eq('user_id', telegramUser.id)
+        .maybeSingle();
+
+      if (existing && existing.auth_user_id && existing.auth_user_id !== user.id) {
+        throw new Error('Этот Telegram аккаунт уже привязан к другому пользователю');
+      }
+
+      // Создаём или обновляем связь
+      const { data, error } = await supabase
+        .from('user_telegram_mapping')
+        .upsert({
+          user_id: telegramUser.id,
+          chat_id: telegramUser.id,
+          username: telegramUser.username,
+          auth_user_id: user.id,
+          updated_at: new Date().toISOString(),
+        }, {
+          onConflict: 'user_id',
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log('✅ Telegram привязан:', data);
+      return { data, error: null };
+    } catch (error) {
+      console.error('❌ Ошибка привязки Telegram:', error);
+      return { data: null, error };
+    }
+  },
+
+  /**
+   * Вход через Telegram (проверка привязки)
+   */
+  async checkTelegramLink(telegramUser) {
+    try {
+      console.log('📱 Проверка привязки Telegram:', telegramUser.id);
+
+      // Ищем привязанный auth_user_id
+      const { data: mapping, error: mappingError } = await supabase
+        .from('user_telegram_mapping')
+        .select('auth_user_id')
+        .eq('user_id', telegramUser.id)
+        .maybeSingle();
+
+      if (mappingError || !mapping?.auth_user_id) {
+        console.log('⚠️ Telegram аккаунт не привязан');
+        return { 
+          linked: false,
+          authUserId: null,
+        };
+      }
+
+      console.log('✅ Telegram привязан к:', mapping.auth_user_id);
+      return {
+        linked: true,
+        authUserId: mapping.auth_user_id,
+      };
+    } catch (error) {
+      console.error('❌ Ошибка проверки привязки:', error);
+      return {
+        linked: false,
+        authUserId: null,
+      };
+    }
+  },
+
+  /**
+   * Вспомогательная функция: создать профиль если не существует
+   */
+  async _ensureUserProfile(userId, phone, fullName) {
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .upsert({
+          id: userId,
+          phone: phone,
+          full_name: fullName,
+        }, {
+          onConflict: 'id',
+        });
+
+      if (error) throw error;
+      console.log('✅ Профиль создан/обновлён');
+    } catch (error) {
+      console.error('❌ Ошибка создания профиля:', error);
+    }
+  },
+
+  // ========================================
+  // СТАРЫЕ МЕТОДЫ: Telegram Auth (сохранены)
+  // ========================================
+
+  async signInWithTelegram(telegramUser) {
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: buildTelegramEmail(telegramUser.id),
+        password: buildTelegramPassword(telegramUser.id),
+      });
+
+      if (isInvalidCredentialsError(error)) {
+        return await this.signUpWithTelegram(telegramUser);
+      }
+
+      if (error) throw error;
+
+      if (data?.user && !data.user.user_metadata?.telegram_id) {
+        console.log('🔧 Updating missing telegram_id for user:', data.user.id);
+        
+        const { error: updateError } = await supabase.auth.updateUser({
+          data: {
+            telegram_id: telegramUser.id,
+            first_name: telegramUser.first_name,
+            last_name: telegramUser.last_name,
+            username: telegramUser.username,
+          }
+        });
+        
+        if (updateError) {
+          console.error('Failed to update telegram_id:', updateError);
+        } else {
+          console.log('✅ telegram_id updated successfully');
+        }
+      }
+
+      return { data, error: null };
+    } catch (error) {
+      console.error('Sign in error:', error);
+      return { data: null, error };
+    }
+  },
 
   async signUpWithTelegram(telegramUser) {
     try {
@@ -103,7 +318,7 @@ export const authHelpers = {
             last_name: telegramUser.last_name,
             username: telegramUser.username,
           },
-          emailRedirectTo: undefined, // Don't send confirmation email
+          emailRedirectTo: undefined,
         },
       });
 
@@ -127,74 +342,74 @@ export const authHelpers = {
     return { data, error };
   },
 
-  async ensureAuthenticatedSession({ telegramUser } = {}) {
+  /**
+   * ОБНОВЛЁННАЯ функция: Универсальная инициализация сессии
+   * Теперь с поддержкой phone auth
+   */
+  async ensureAuthenticatedSession({ telegramUser, platform } = {}) {
+    console.log('🔄 Инициализация сессии:', { telegramUser: !!telegramUser, platform });
+
+    // Проверяем существующую сессию
+    const existingUser = await this.getCurrentUser();
+
+    // Если есть Telegram данные
     if (telegramUser) {
-      const existingUser = await this.getCurrentUser();
-
-      // Keep a valid Telegram-bound session to avoid unnecessary re-auth and
-      // accidental fallback to a fresh anonymous account.
-      if (existingUser && isSessionMatchingTelegramUser(existingUser, telegramUser)) {
-        return { user: existingUser, mode: 'session', error: null };
-      }
-
-      if (existingUser && !isSessionMatchingTelegramUser(existingUser, telegramUser)) {
-        console.warn('Telegram account switched: clearing mismatched Supabase session', {
-          currentSessionTelegramId: getSessionTelegramId(existingUser),
-          telegramUserId: getTelegramUserId(telegramUser),
-        });
-
-        const { error: signOutError } = await this.signOut();
-        if (signOutError) {
-          console.error('Failed to sign out mismatched Supabase session:', signOutError);
+      // Проверяем, привязан ли Telegram к phone auth аккаунту
+      const linkCheck = await this.checkTelegramLink(telegramUser);
+      
+      if (linkCheck.linked && linkCheck.authUserId) {
+        // Telegram привязан к phone auth - проверяем сессию
+        if (existingUser && existingUser.id === linkCheck.authUserId) {
+          console.log('✅ Активная сессия phone auth с привязкой Telegram');
+          return { user: existingUser, mode: 'session', error: null };
         }
+        
+        // Сессии нет, но аккаунт привязан - требуется вход через телефон
+        console.log('⚠️ Telegram привязан, но сессия отсутствует - требуется вход');
+        return { user: null, mode: 'needs_login', error: null };
+      }
+      
+      // Telegram НЕ привязан
+      if (existingUser) {
+        // Есть активная phone auth сессия - можем привязать Telegram
+        const { error } = await this.linkTelegramAccount(telegramUser);
+        if (!error) {
+          console.log('✅ Telegram привязан к текущей phone auth сессии');
+        }
+        return { user: existingUser, mode: 'existing_session', error: null };
       }
 
-      const signInResult = await this.signInWithTelegram(telegramUser);
-      if (!signInResult.error) {
-        return { user: signInResult.data?.user ?? signInResult.data?.session?.user ?? null, mode: 'telegram', error: null };
-      }
-
-      // Fallback to anonymous session instead of local cache when Telegram auth fails.
-      // This keeps data operations in Supabase and avoids switching to local-only mode.
-      console.warn('Telegram auth failed, switching to anonymous Supabase session:', signInResult.error);
-
-      const freshUser = await this.getCurrentUser();
-      if (freshUser && isSessionMatchingTelegramUser(freshUser, telegramUser)) {
-        return { user: freshUser, mode: 'session', error: null };
-      }
-
-      if (freshUser && !isSessionMatchingTelegramUser(freshUser, telegramUser)) {
-        await this.signOut();
-      }
-
-      const anonymousResult = await this.signInAnonymously();
-      if (anonymousResult.error) {
-        return { user: null, mode: 'telegram', error: signInResult.error };
-      }
-
-      return {
-        user: anonymousResult.data?.user ?? anonymousResult.data?.session?.user ?? null,
-        mode: 'anonymous_after_telegram_error',
-        error: null,
-      };
+      // Нет ни привязки, ни сессии - требуется регистрация
+      console.log('⚠️ Telegram не привязан, сессии нет - требуется регистрация');
+      return { user: null, mode: 'needs_registration', error: null };
     }
 
-    const existingUser = await this.getCurrentUser();
+    // Если есть существующая сессия - используем её
     if (existingUser) {
       return { user: existingUser, mode: 'session', error: null };
     }
 
-    const { data, error } = await this.signInAnonymously();
-    if (error) {
-      return { user: null, mode: 'anonymous', error };
-    }
-
-    return { user: data?.user ?? data?.session?.user ?? null, mode: 'anonymous', error: null };
+    // Нет ни Telegram, ни сессии - требуется вход
+    console.log('⚠️ Требуется авторизация');
+    return { user: null, mode: 'needs_auth', error: null };
   },
 
   async getCurrentUser() {
     const { data: { user } } = await supabase.auth.getUser();
     return user;
+  },
+
+  async getUserProfile() {
+    const user = await this.getCurrentUser();
+    if (!user) return { data: null, error: 'Not authenticated' };
+
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    return { data, error };
   },
 
   async signOut() {
@@ -203,20 +418,23 @@ export const authHelpers = {
   },
 };
 
-// Baby profile helpers
+// ========================================
+// BABY HELPERS - БЕЗ ИЗМЕНЕНИЙ
+// ========================================
+
 export const babyHelpers = {
   async getProfile() {
-  const user = await authHelpers.getCurrentUser();
-  if (!user) return { data: null, error: 'Not authenticated' };
-  
-  const { data, error } = await supabase
-    .from('babies')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle(); // ← ИЗМЕНИЛИ на maybeSingle()
-  
-  return { data, error };
-},
+    const user = await authHelpers.getCurrentUser();
+    if (!user) return { data: null, error: 'Not authenticated' };
+    
+    const { data, error } = await supabase
+      .from('babies')
+      .select('*')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    
+    return { data, error };
+  },
 
   async createProfile(profile) {
     const user = await authHelpers.getCurrentUser();
@@ -259,7 +477,10 @@ export const babyHelpers = {
   },
 };
 
-// Activities helpers
+// ========================================
+// ACTIVITIES HELPERS - БЕЗ ИЗМЕНЕНИЙ
+// ========================================
+
 export const activityHelpers = {
   async getActivities(limit = 100) {
     const profile = await babyHelpers.getProfile();
@@ -287,7 +508,6 @@ export const activityHelpers = {
       comment: activity.comment,
     };
 
-    // Add type-specific fields
     if (activity.type === 'breastfeeding') {
       activityData.left_duration = activity.leftDuration;
       activityData.right_duration = activity.rightDuration;
@@ -317,7 +537,6 @@ export const activityHelpers = {
       comment: activity.comment,
     };
 
-    // Add type-specific fields
     if (activity.type === 'breastfeeding') {
       updateData.left_duration = activity.leftDuration;
       updateData.right_duration = activity.rightDuration;
@@ -350,7 +569,10 @@ export const activityHelpers = {
   },
 };
 
-// Growth records helpers
+// ========================================
+// GROWTH HELPERS - БЕЗ ИЗМЕНЕНИЙ
+// ========================================
+
 export const growthHelpers = {
   async getRecords() {
     const profile = await babyHelpers.getProfile();
@@ -408,7 +630,10 @@ export const growthHelpers = {
   },
 };
 
-// Real-time subscriptions
+// ========================================
+// SUBSCRIPTIONS - БЕЗ ИЗМЕНЕНИЙ
+// ========================================
+
 export const subscribeToActivities = (callback) => {
   return supabase
     .channel('activities_changes')
@@ -429,7 +654,6 @@ export const subscribeToGrowthRecords = (callback) => {
     .subscribe();
 };
 
-// Optimized initial dashboard loading to avoid duplicated profile queries
 export const appDataHelpers = {
   async getInitialData(limit = 100) {
     const profileResult = await babyHelpers.getProfile();

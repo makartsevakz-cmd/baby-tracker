@@ -48,6 +48,14 @@ const ActivityTracker = () => {
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
   const [isOnboardingStatusResolved, setIsOnboardingStatusResolved] = useState(false);
   const activeNamespaceRef = useRef('global');
+  // НОВЫЕ СОСТОЯНИЯ ДЛЯ АВТОРИЗАЦИИ
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' или 'register'
+  const [authPhone, setAuthPhone] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authFullName, setAuthFullName] = useState('');
+  const [authFormError, setAuthFormError] = useState('');
+  const [telegramUserRef, setTelegramUserRef] = useState(null);
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -280,6 +288,27 @@ const ActivityTracker = () => {
 
         try {
           const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({ telegramUser });
+
+          // НОВАЯ ЛОГИКА: Проверка на необходимость авторизации
+          if (mode === 'needs_registration') {
+            console.log('⚠️ Требуется регистрация');
+            setTelegramUserRef(telegramUser);
+            setNeedsAuth(true);
+            setAuthMode('register');
+            clearTimeout(loadTimeout);
+            setIsLoading(false);
+            return;
+          }
+
+          if (mode === 'needs_login' || mode === 'needs_auth') {
+            console.log('⚠️ Требуется вход');
+            setTelegramUserRef(telegramUser);
+            setNeedsAuth(true);
+            setAuthMode('login');
+            clearTimeout(loadTimeout);
+            setIsLoading(false);
+            return;
+          }
 
           if (error) {
             console.error('Auth error:', error);
@@ -1279,6 +1308,257 @@ const ActivityTracker = () => {
       timeInputMode: 'manual',
     }));
   };
+
+// ========================================
+  // ОБРАБОТЧИКИ АВТОРИЗАЦИИ
+  // ========================================
+
+  const handleLogin = async (e) => {
+    e.preventDefault();
+    setAuthFormError('');
+    setIsLoading(true);
+
+    try {
+      const { data, error } = await supabaseModule.authHelpers.signInWithPhone(
+        authPhone, 
+        authPassword
+      );
+
+      if (error) {
+        setAuthFormError(error.message === 'Invalid login credentials' 
+          ? 'Неверный телефон или пароль' 
+          : error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      if (data?.user) {
+        // Если это Telegram - привязываем аккаунт
+        if (telegramUserRef) {
+          await supabaseModule.authHelpers.linkTelegramAccount(telegramUserRef);
+        }
+
+        // Сбрасываем флаг авторизации и перезагружаем данные
+        setNeedsAuth(false);
+        setAuthPhone('');
+        setAuthPassword('');
+        setAuthFullName('');
+        await loadData();
+      }
+
+      setIsLoading(false);
+    } catch (error) {
+      console.error('❌ Ошибка входа:', error);
+      setAuthFormError('Произошла ошибка. Попробуйте снова.');
+      setIsLoading(false);
+    }
+  };
+
+  const handleRegister = async (e) => {
+    e.preventDefault();
+    setAuthFormError('');
+    setIsLoading(true);
+
+    try {
+      if (authPhone.length < 11) {
+        setAuthFormError('Введите корректный номер телефона');
+        setIsLoading(false);
+        return;
+      }
+
+      if (authPassword.length < 6) {
+        setAuthFormError('Пароль должен быть не менее 6 символов');
+        setIsLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabaseModule.authHelpers.signUpWithPhone(
+        authPhone, 
+        authPassword, 
+        authFullName
+      );
+
+      if (error) {
+        setAuthFormError(error.message.includes('already registered') 
+          ? 'Этот номер уже зарегистрирован' 
+          : error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      if (data?.user) {
+        // Если это Telegram - привязываем аккаунт
+        if (telegramUserRef) {
+          await supabaseModule.authHelpers.linkTelegramAccount(telegramUserRef);
+        }
+
+        // Сбрасываем флаг авторизации и перезагружаем данные
+        setNeedsAuth(false);
+        setAuthPhone('');
+        setAuthPassword('');
+        setAuthFullName('');
+        await loadData();
+      }
+
+      setIsLoading(false);
+    } catch (error) {
+      console.error('❌ Ошибка регистрации:', error);
+      setAuthFormError('Произошла ошибка. Попробуйте снова.');
+      setIsLoading(false);
+    }
+  };
+
+  // ========================================
+  // ЭКРАНЫ АВТОРИЗАЦИИ
+  // ========================================
+
+  if (needsAuth && authMode === 'login') {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-purple-600 mb-2">👶 Дневник малыша</h1>
+            <p className="text-gray-600">Войдите в свой аккаунт</p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Номер телефона
+              </label>
+              <input
+                type="tel"
+                value={authPhone}
+                onChange={(e) => setAuthPhone(e.target.value)}
+                placeholder="+7 999 123 45 67"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Пароль
+              </label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Введите пароль"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            {authFormError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                {authFormError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? 'Вход...' : 'Войти'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => setAuthMode('register')}
+              className="text-purple-600 hover:text-purple-700 font-medium"
+            >
+              Нет аккаунта? Зарегистрироваться
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (needsAuth && authMode === 'register') {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-purple-600 mb-2">👶 Дневник малыша</h1>
+            <p className="text-gray-600">Создайте аккаунт</p>
+          </div>
+
+          <form onSubmit={handleRegister} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Ваше имя (необязательно)
+              </label>
+              <input
+                type="text"
+                value={authFullName}
+                onChange={(e) => setAuthFullName(e.target.value)}
+                placeholder="Введите ваше имя"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Номер телефона
+              </label>
+              <input
+                type="tel"
+                value={authPhone}
+                onChange={(e) => setAuthPhone(e.target.value)}
+                placeholder="+7 999 123 45 67"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                required
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Будет использоваться для входа в приложение
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Пароль
+              </label>
+              <input
+                type="password"
+                value={authPassword}
+                onChange={(e) => setAuthPassword(e.target.value)}
+                placeholder="Минимум 6 символов"
+                className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                required
+              />
+            </div>
+
+            {authFormError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+                {authFormError}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={isLoading}
+              className="w-full bg-purple-600 text-white py-3 rounded-lg font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+            >
+              {isLoading ? 'Регистрация...' : 'Зарегистрироваться'}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => setAuthMode('login')}
+              className="text-purple-600 hover:text-purple-700 font-medium"
+            >
+              Уже есть аккаунт? Войти
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (
