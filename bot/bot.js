@@ -8,11 +8,15 @@ const BOT_TOKEN = process.env.BOT_TOKEN || 'YOUR_BOT_TOKEN';
 const WEB_APP_URL = process.env.WEB_APP_URL || 'https://your-app-url.vercel.app';
 const SUPABASE_URL = process.env.SUPABASE_URL || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || '';
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || SUPABASE_SERVICE_KEY;
 
 // Инициализация
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 const supabase = SUPABASE_URL && SUPABASE_SERVICE_KEY 
   ? createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+  : null;
+const supabaseAuth = SUPABASE_URL && SUPABASE_ANON_KEY
+  ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
   : null;
 
 console.log('🤖 Бот запущен!');
@@ -106,6 +110,78 @@ async function isUserRegistered(telegramUserId) {
 
 // Состояние регистрации (в памяти)
 const registrationStates = new Map();
+
+function getStartInlineKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+      [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
+    ],
+  };
+}
+
+function getRegistrationInlineKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+      [{ text: '🔐 Регистрация через бот', callback_data: 'start_registration' }],
+      [{ text: '✅ Я уже зарегистрировалась в приложении', callback_data: 'check_registration' }],
+      [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
+    ],
+  };
+}
+
+async function sendFeaturesMessage(chatId) {
+  return bot.sendMessage(chatId, `
+📖 *Что умеют приложение и бот*
+
+📱 *В приложении:*
+• регистрация и вход по email
+• карточка малыша и журнал активностей
+• статистика, графики и история
+• настройка напоминаний
+
+🤖 *В боте:*
+• быстрый запуск/остановка активностей
+• удобное меню активных таймеров
+• переход в приложение в один тап
+• напоминания из приложения
+
+Если вы уже зарегистрировались в приложении, нажмите «Я уже зарегистрировалась в приложении» и привяжите аккаунт.
+  `.trim(), {
+    parse_mode: 'Markdown',
+    reply_markup: getRegistrationInlineKeyboard(),
+  });
+}
+
+async function startRegistrationFlow(chatId, telegramUserId, username) {
+  registrationStates.set(telegramUserId, {
+    flow: 'register',
+    step: 'awaiting_email',
+    username,
+  });
+
+  await bot.sendMessage(chatId,
+    '📱 Регистрация\n\n' +
+    'Шаг 1/3: Введите ваш email\n' +
+    'Формат: name@example.com\n\n' +
+    'Или отмените: /cancel'
+  );
+}
+
+async function startLinkFlow(chatId, telegramUserId, username) {
+  registrationStates.set(telegramUserId, {
+    flow: 'link_existing',
+    step: 'awaiting_link_email',
+    username,
+  });
+
+  await bot.sendMessage(chatId,
+    '🔗 Привязка существующего аккаунта\n\n' +
+    'Шаг 1/2: Введите email, который использовали в приложении.\n\n' +
+    'Или отмените: /cancel'
+  );
+}
 
 async function sendNotificationSafe(chatId, notification, scheduledMinute, customMessage = null) {
   try {
@@ -852,11 +928,7 @@ bot.onText(/\/start/, async (msg) => {
       '👋 Добро пожаловать!\n\n' +
       'Откройте приложение:',
       {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]
-          ]
-        }
+        reply_markup: getStartInlineKeyboard()
       }
     );
     return;
@@ -869,15 +941,10 @@ bot.onText(/\/start/, async (msg) => {
     await bot.sendMessage(chatId, 
       '👋 Добро пожаловать в Дневник малыша!\n\n' +
       'Для начала работы вам нужно зарегистрироваться.\n\n' +
-      '🔐 Используйте команду /register для регистрации\n' +
+      '🔐 Используйте команду /register для регистрации по email\n' +
       'или откройте приложение:',
       {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
-            [{ text: '🔐 Регистрация через бот', callback_data: 'start_registration' }]
-          ]
-        }
+        reply_markup: getRegistrationInlineKeyboard()
       }
     );
     return;
@@ -959,17 +1026,14 @@ bot.onText(/\/help/, (msg) => {
 **Команды:**
 /start - Открыть приложение
 /help - Эта справка
+/check_registration - Привязать уже существующий аккаунт
 
 Есть вопросы? Напишите нам!
   `.trim();
 
   bot.sendMessage(chatId, helpMessage, {
     parse_mode: 'Markdown',
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '🚀 Открыть приложение', web_app: { url: WEB_APP_URL } }
-      ]]
-    }
+    reply_markup: getRegistrationInlineKeyboard()
   });
 });
 
@@ -988,17 +1052,22 @@ bot.onText(/\/register/, async (msg) => {
     return;
   }
 
-  registrationStates.set(telegramUserId, { 
-    step: 'awaiting_email',
-    username: msg.from.username 
-  });
+  await startRegistrationFlow(chatId, telegramUserId, msg.from.username);
+});
 
-  await bot.sendMessage(chatId,
-    '📱 Регистрация\n\n' +
-    'Шаг 1/3: Введите ваш email\n' +
-    'Формат: name@example.com\n\n' +
-    'Или отмените: /cancel'
-  );
+bot.onText(/\/check_registration/, async (msg) => {
+  const chatId = msg.chat.id;
+  const telegramUserId = msg.from.id;
+
+  const { registered } = await isUserRegistered(telegramUserId);
+  if (registered) {
+    await bot.sendMessage(chatId, '✅ Вижу, что аккаунт уже привязан. Можно продолжать работу!', {
+      reply_markup: getMainMenuKeyboard(),
+    });
+    return;
+  }
+
+  await startLinkFlow(chatId, telegramUserId, msg.from.username);
 });
 
 bot.onText(/\/cancel/, async (msg) => {
@@ -1024,35 +1093,55 @@ bot.onText(/\/skip/, async (msg) => {
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
 
-  // НОВАЯ ЛОГИКА: Обработка кнопки регистрации
-  if (query.data === 'start_registration') {
-    const telegramUserId = query.from.id;
-    
-    registrationStates.set(telegramUserId, { 
-      step: 'awaiting_email',
-      username: query.from.username 
-    });
-    
-    await bot.sendMessage(chatId,
-      '📱 Регистрация\n\n' +
-      'Шаг 1/3: Введите ваш email\n' +
-      'Формат: name@example.com\n\n' +
-      'Или отмените: /cancel'
-    );
-    
+  const telegramUserId = query.from.id;
+
+  if (query.data === 'show_features') {
     await bot.answerCallbackQuery(query.id);
+    await sendFeaturesMessage(chatId);
     return;
   }
 
-  // ДОБАВИТЬ ПРОВЕРКУ РЕГИСТРАЦИИ для остальных команд
-  const telegramUserId = query.from.id;
+  if (query.data === 'start_registration') {
+    await bot.answerCallbackQuery(query.id);
+    await startRegistrationFlow(chatId, telegramUserId, query.from.username);
+    return;
+  }
+
+  if (query.data === 'check_registration') {
+    await bot.answerCallbackQuery(query.id);
+
+    const { registered } = await isUserRegistered(telegramUserId);
+    if (registered) {
+      await bot.sendMessage(chatId, '✅ Регистрация найдена. Продолжаем 👇', {
+        reply_markup: getMainMenuKeyboard(),
+      });
+      await sendMainMenuMessage(chatId);
+      return;
+    }
+
+    await bot.sendMessage(chatId,
+      'Пока не вижу привязку Telegram к аккаунту.\n' +
+      'Введите email и пароль от приложения, чтобы привязать аккаунт.', {
+        reply_markup: getRegistrationInlineKeyboard(),
+      }
+    );
+    await startLinkFlow(chatId, telegramUserId, query.from.username);
+    return;
+  }
+
   const { registered } = await isUserRegistered(telegramUserId);
-  
-  if (!registered && !query.data?.startsWith('qa:cancel') && !query.data?.startsWith('qa:home')) {
+
+  if (!registered && query.data?.startsWith('qa:')) {
     await bot.answerCallbackQuery(query.id, {
-      text: '⚠️ Сначала зарегистрируйтесь!',
+      text: '⚠️ Сначала завершите регистрацию или проверьте привязку аккаунта.',
       show_alert: true
     });
+
+    await bot.sendMessage(chatId,
+      'Чтобы продолжить, выберите один из вариантов:', {
+        reply_markup: getRegistrationInlineKeyboard(),
+      }
+    );
     return;
   }
 
@@ -1216,6 +1305,30 @@ bot.on('message', async (msg) => {
       if (state.step === 'awaiting_name') {
         state.fullName = text;
         await completeRegistration(chatId, telegramUserId, state);
+        return;
+      }
+
+      // ПРИВЯЗКА СУЩЕСТВУЮЩЕГО АККАУНТА: email
+      if (state.step === 'awaiting_link_email') {
+        const email = normalizeEmail(text);
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          await bot.sendMessage(chatId, '❌ Некорректный email. Попробуйте ещё раз:');
+          return;
+        }
+
+        state.email = email;
+        state.step = 'awaiting_link_password';
+        registrationStates.set(telegramUserId, state);
+
+        await bot.sendMessage(chatId, 'Шаг 2/2: Введите пароль от аккаунта в приложении.');
+        return;
+      }
+
+      // ПРИВЯЗКА СУЩЕСТВУЮЩЕГО АККАУНТА: пароль
+      if (state.step === 'awaiting_link_password') {
+        state.password = text;
+        await completeLinkExistingAccount(chatId, telegramUserId, state);
         return;
       }
     } catch (error) {
@@ -1408,6 +1521,70 @@ async function completeRegistration(chatId, telegramUserId, state) {
   } catch (error) {
     console.error('Registration error:', error);
     await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте позже.');
+    registrationStates.delete(telegramUserId);
+  }
+}
+
+
+async function completeLinkExistingAccount(chatId, telegramUserId, state) {
+  if (!supabase || !supabaseAuth) {
+    await bot.sendMessage(chatId, '❌ Интеграция с базой не настроена. Попробуйте позже.');
+    registrationStates.delete(telegramUserId);
+    return;
+  }
+
+  try {
+    await bot.sendMessage(chatId, '⏳ Проверяю данные аккаунта...');
+
+    const { email, password, username } = state;
+
+    const { data: signInData, error: signInError } = await supabaseAuth.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (signInError || !signInData?.user?.id) {
+      await bot.sendMessage(chatId,
+        '❌ Не удалось войти. Проверьте email/пароль и попробуйте снова через /check_registration.'
+      );
+      registrationStates.delete(telegramUserId);
+      return;
+    }
+
+    const authUserId = signInData.user.id;
+
+    const { error: mappingError } = await supabase
+      .from('user_telegram_mapping')
+      .upsert(
+        {
+          user_id: telegramUserId,
+          chat_id: chatId,
+          username,
+          auth_user_id: authUserId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      );
+
+    if (mappingError) {
+      console.error('Mapping error:', mappingError);
+      await bot.sendMessage(chatId, '❌ Не удалось привязать Telegram к аккаунту. Попробуйте позже.');
+      registrationStates.delete(telegramUserId);
+      return;
+    }
+
+    await supabaseAuth.auth.signOut();
+    registrationStates.delete(telegramUserId);
+
+    await bot.sendMessage(chatId,
+      '✅ Готово! Ваш Telegram привязан к существующему аккаунту.\n\nТеперь в боте доступно дальнейшее меню.',
+      { reply_markup: getMainMenuKeyboard() }
+    );
+
+    await sendMainMenuMessage(chatId);
+  } catch (error) {
+    console.error('Link existing account error:', error);
+    await bot.sendMessage(chatId, '❌ Произошла ошибка привязки. Попробуйте позже.');
     registrationStates.delete(telegramUserId);
   }
 }
