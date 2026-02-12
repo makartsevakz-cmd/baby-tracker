@@ -51,7 +51,7 @@ const ActivityTracker = () => {
   // НОВЫЕ СОСТОЯНИЯ ДЛЯ АВТОРИЗАЦИИ
   const [needsAuth, setNeedsAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' или 'register'
-  const [authPhone, setAuthPhone] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authFullName, setAuthFullName] = useState('');
   const [authFormError, setAuthFormError] = useState('');
@@ -1321,14 +1321,14 @@ const ActivityTracker = () => {
     setIsLoading(true);
 
     try {
-      const { data, error } = await supabaseModule.authHelpers.signInWithPhone(
-        authPhone, 
+      const { data, error } = await supabaseModule.authHelpers.signInWithEmail(
+        authEmail, 
         authPassword
       );
 
       if (error) {
         setAuthFormError(error.message === 'Invalid login credentials' 
-          ? 'Неверный телефон или пароль' 
+          ? 'Неверный email или пароль' 
           : error.message);
         setIsLoading(false);
         return;
@@ -1342,7 +1342,7 @@ const ActivityTracker = () => {
 
         // Сбрасываем флаг авторизации и перезагружаем данные
         setNeedsAuth(false);
-        setAuthPhone('');
+        setAuthEmail('');
         setAuthPassword('');
         setAuthFullName('');
         await loadData();
@@ -1362,8 +1362,8 @@ const ActivityTracker = () => {
     setIsLoading(true);
 
     try {
-      if (authPhone.length < 11) {
-        setAuthFormError('Введите корректный номер телефона');
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmail.trim())) {
+        setAuthFormError('Введите корректный email');
         setIsLoading(false);
         return;
       }
@@ -1374,21 +1374,21 @@ const ActivityTracker = () => {
         return;
       }
 
-      const { data, error } = await supabaseModule.authHelpers.signUpWithPhone(
-        authPhone, 
+      const { data, error } = await supabaseModule.authHelpers.signUpWithEmail(
+        authEmail, 
         authPassword, 
         authFullName
       );
 
       if (error) {
         setAuthFormError(error.message.includes('already registered') 
-          ? 'Этот номер уже зарегистрирован' 
+          ? 'Этот email уже зарегистрирован' 
           : error.message);
         setIsLoading(false);
         return;
       }
 
-      if (data?.user) {
+      if (data?.session && data?.user) {
         // Если это Telegram - привязываем аккаунт
         if (telegramUserRef) {
           await supabaseModule.authHelpers.linkTelegramAccount(telegramUserRef);
@@ -1396,10 +1396,15 @@ const ActivityTracker = () => {
 
         // Сбрасываем флаг авторизации и перезагружаем данные
         setNeedsAuth(false);
-        setAuthPhone('');
+        setAuthEmail('');
         setAuthPassword('');
         setAuthFullName('');
         await loadData();
+      } else if (data?.user) {
+        // Если в Supabase включат подтверждение email, то после signUp сессии не будет.
+        // В этом случае не входим автоматически и просим пользователя подтвердить почту.
+        setAuthFormError('Проверьте почту и подтвердите email, затем выполните вход.');
+        setAuthMode('login');
       }
 
       setIsLoading(false);
@@ -1426,13 +1431,13 @@ const ActivityTracker = () => {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Номер телефона
+                Email
               </label>
               <input
-                type="tel"
-                value={authPhone}
-                onChange={(e) => setAuthPhone(e.target.value)}
-                placeholder="+7 999 123 45 67"
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="name@example.com"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 required
               />
@@ -1505,18 +1510,18 @@ const ActivityTracker = () => {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
-                Номер телефона
+                Email
               </label>
               <input
-                type="tel"
-                value={authPhone}
-                onChange={(e) => setAuthPhone(e.target.value)}
-                placeholder="+7 999 123 45 67"
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="name@example.com"
                 className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
                 required
               />
               <p className="text-xs text-gray-500 mt-1">
-                Будет использоваться для входа в приложение
+Будет использоваться для входа в приложение и Telegram
               </p>
             </div>
 

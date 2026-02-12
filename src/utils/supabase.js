@@ -48,39 +48,7 @@ const isSessionMatchingTelegramUser = (user, telegramUser) => {
   return getSessionEmail(user) === buildTelegramEmail(telegramUserId);
 };
 
-// ========================================
-// НОВЫЕ ФУНКЦИИ (для Phone Auth)
-// ========================================
-
-/**
- * Форматирование номера телефона
- * Приводит к формату: +79991234567
- */
-const formatPhone = (phone) => {
-  let cleaned = phone.replace(/[^\d+]/g, '');
-  
-  if (cleaned.startsWith('8')) {
-    cleaned = '+7' + cleaned.slice(1);
-  }
-  
-  if (cleaned.startsWith('7') && !cleaned.startsWith('+')) {
-    cleaned = '+' + cleaned;
-  }
-  
-  if (!cleaned.startsWith('+')) {
-    cleaned = '+7' + cleaned;
-  }
-  
-  return cleaned;
-};
-
-/**
- * Генерация email для phone auth
- */
-const phoneToEmail = (phone) => {
-  const cleaned = formatPhone(phone).replace(/\+/g, '');
-  return `${cleaned}@babydiary.local`;
-};
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
 // ========================================
 // AUTH HELPERS - ОБНОВЛЁННАЯ ВЕРСИЯ
@@ -88,27 +56,25 @@ const phoneToEmail = (phone) => {
 
 export const authHelpers = {
   // ========================================
-  // НОВЫЕ МЕТОДЫ: Phone Auth
+  // НОВЫЕ МЕТОДЫ: Email Auth
   // ========================================
 
   /**
-   * Регистрация через телефон и пароль
+   * Регистрация через email и пароль
    */
-  async signUpWithPhone(phone, password, fullName = '') {
+  async signUpWithEmail(email, password, fullName = '') {
     try {
-      const formattedPhone = formatPhone(phone);
-      const email = phoneToEmail(formattedPhone);
+      const normalizedEmail = normalizeEmail(email);
 
-      console.log('📱 Регистрация:', { phone: formattedPhone, email });
+      console.log('📱 Регистрация:', { email: normalizedEmail });
 
       const { data, error } = await supabase.auth.signUp({
-        email: email,
+        email: normalizedEmail,
         password: password,
         options: {
           data: {
-            phone: formattedPhone,
             full_name: fullName,
-            auth_method: 'phone',
+            auth_method: 'email',
           },
           emailRedirectTo: undefined,
         },
@@ -118,7 +84,7 @@ export const authHelpers = {
 
       // Создаём профиль в user_profiles (если не создался триггером)
       if (data?.user) {
-        await this._ensureUserProfile(data.user.id, formattedPhone, fullName);
+        await this._ensureUserProfile(data.user.id, normalizedEmail, fullName);
       }
 
       console.log('✅ Регистрация успешна:', data);
@@ -130,17 +96,16 @@ export const authHelpers = {
   },
 
   /**
-   * Вход через телефон и пароль
+   * Вход через email и пароль
    */
-  async signInWithPhone(phone, password) {
+  async signInWithEmail(email, password) {
     try {
-      const formattedPhone = formatPhone(phone);
-      const email = phoneToEmail(formattedPhone);
+      const normalizedEmail = normalizeEmail(email);
 
-      console.log('🔐 Вход:', { phone: formattedPhone, email });
+      console.log('🔐 Вход:', { email: normalizedEmail });
 
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: email,
+        email: normalizedEmail,
         password: password,
       });
 
@@ -244,13 +209,12 @@ export const authHelpers = {
   /**
    * Вспомогательная функция: создать профиль если не существует
    */
-  async _ensureUserProfile(userId, phone, fullName) {
+  async _ensureUserProfile(userId, _email, fullName) {
     try {
       const { error } = await supabase
         .from('user_profiles')
         .upsert({
           id: userId,
-          phone: phone,
           full_name: fullName,
         }, {
           onConflict: 'id',
@@ -344,7 +308,7 @@ export const authHelpers = {
 
   /**
    * ОБНОВЛЁННАЯ функция: Универсальная инициализация сессии
-   * Теперь с поддержкой phone auth
+   * Теперь с поддержкой email auth
    */
   async ensureAuthenticatedSession({ telegramUser, platform } = {}) {
     console.log('🔄 Инициализация сессии:', { telegramUser: !!telegramUser, platform });
@@ -354,27 +318,27 @@ export const authHelpers = {
 
     // Если есть Telegram данные
     if (telegramUser) {
-      // Проверяем, привязан ли Telegram к phone auth аккаунту
+      // Проверяем, привязан ли Telegram к email auth аккаунту
       const linkCheck = await this.checkTelegramLink(telegramUser);
       
       if (linkCheck.linked && linkCheck.authUserId) {
-        // Telegram привязан к phone auth - проверяем сессию
+        // Telegram привязан к email auth - проверяем сессию
         if (existingUser && existingUser.id === linkCheck.authUserId) {
-          console.log('✅ Активная сессия phone auth с привязкой Telegram');
+          console.log('✅ Активная сессия email auth с привязкой Telegram');
           return { user: existingUser, mode: 'session', error: null };
         }
         
-        // Сессии нет, но аккаунт привязан - требуется вход через телефон
+        // Сессии нет, но аккаунт привязан - требуется вход через email
         console.log('⚠️ Telegram привязан, но сессия отсутствует - требуется вход');
         return { user: null, mode: 'needs_login', error: null };
       }
       
       // Telegram НЕ привязан
       if (existingUser) {
-        // Есть активная phone auth сессия - можем привязать Telegram
+        // Есть активная email auth сессия - можем привязать Telegram
         const { error } = await this.linkTelegramAccount(telegramUser);
         if (!error) {
-          console.log('✅ Telegram привязан к текущей phone auth сессии');
+          console.log('✅ Telegram привязан к текущей email auth сессии');
         }
         return { user: existingUser, mode: 'existing_session', error: null };
       }
