@@ -292,6 +292,7 @@ const ActivityTracker = () => {
           // НОВАЯ ЛОГИКА: Проверка на необходимость авторизации
           if (mode === 'needs_registration') {
             console.log('⚠️ Требуется регистрация');
+            console.log('🔍 DEBUG: needsAuth =', true, ', authMode = register, isLoading =', false);
             setTelegramUserRef(telegramUser);
             setNeedsAuth(true);
             setAuthMode('register');
@@ -302,6 +303,7 @@ const ActivityTracker = () => {
 
           if (mode === 'needs_login' || mode === 'needs_auth') {
             console.log('⚠️ Требуется вход');
+            console.log('🔍 DEBUG: needsAuth = true, authMode = login, isLoading = false');
             setTelegramUserRef(telegramUser);
             setNeedsAuth(true);
             setAuthMode('login');
