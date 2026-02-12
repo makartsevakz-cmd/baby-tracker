@@ -2441,13 +2441,6 @@ const ActivityTracker = () => {
         <div className="max-w-7xl mx-auto px-4">
           {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
-            <button
-              onClick={handleBack}
-              className="p-2 rounded-lg bg-gray-100 text-gray-700 active:scale-95 transition-transform mr-2"
-              title="Назад"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
             <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Статистика</h2>
           </div>
@@ -2631,20 +2624,6 @@ const ActivityTracker = () => {
               </div>
             </div>
           </button>
-          <div>
-            {isAuthenticated && (
-              <div className="flex items-center text-xs text-green-600 mt-1">
-                <div className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></div>
-                Синхронизировано
-              </div>
-            )}
-            {!isAuthenticated && (
-              <div className="flex items-center text-xs text-gray-500 mt-1">
-                <div className="w-2 h-2 bg-gray-400 rounded-full mr-1"></div>
-                Локальное хранилище
-              </div>
-            )}
-          </div>
         </div>
 
         {activeTimers.length > 0 && (
