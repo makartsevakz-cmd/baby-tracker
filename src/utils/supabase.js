@@ -318,34 +318,36 @@ export const authHelpers = {
 
     // Если есть Telegram данные
     if (telegramUser) {
-      // Проверяем, привязан ли Telegram к email auth аккаунту
-      const linkCheck = await this.checkTelegramLink(telegramUser);
-      
-      if (linkCheck.linked && linkCheck.authUserId) {
-        // Telegram привязан к email auth - проверяем сессию
-        if (existingUser && existingUser.id === linkCheck.authUserId) {
-          console.log('✅ Активная сессия email auth с привязкой Telegram');
-          return { user: existingUser, mode: 'session', error: null };
-        }
-        
-        // Сессии нет, но аккаунт привязан - требуется вход через email
-        console.log('⚠️ Telegram привязан, но сессия отсутствует - требуется вход');
-        return { user: null, mode: 'needs_login', error: null };
-      }
-      
-      // Telegram НЕ привязан
-      if (existingUser) {
-        // Есть активная email auth сессия - можем привязать Telegram
-        const { error } = await this.linkTelegramAccount(telegramUser);
-        if (!error) {
-          console.log('✅ Telegram привязан к текущей email auth сессии');
-        }
-        return { user: existingUser, mode: 'existing_session', error: null };
+      // В Telegram всегда используем бесшовный вход/регистрацию по telegram_id.
+      if (existingUser && isSessionMatchingTelegramUser(existingUser, telegramUser)) {
+        await this._ensureUserProfile(
+          existingUser.id,
+          existingUser.email,
+          telegramUser.first_name || telegramUser.username || ''
+        );
+        await this.linkTelegramAccount(telegramUser);
+        return { user: existingUser, mode: 'session', error: null };
       }
 
-      // Нет ни привязки, ни сессии - требуется регистрация
-      console.log('⚠️ Telegram не привязан, сессии нет - требуется регистрация');
-      return { user: null, mode: 'needs_registration', error: null };
+      if (existingUser && !isSessionMatchingTelegramUser(existingUser, telegramUser)) {
+        // Не смешиваем чужую email-сессию с текущим Telegram пользователем.
+        await this.signOut();
+      }
+
+      const { data: telegramAuthData, error: telegramAuthError } = await this.signInWithTelegram(telegramUser);
+      if (telegramAuthError || !telegramAuthData?.user) {
+        console.error('❌ Не удалось выполнить бесшовную Telegram-аутентификацию:', telegramAuthError);
+        return { user: null, mode: 'needs_auth', error: telegramAuthError || new Error('Telegram auth failed') };
+      }
+
+      await this._ensureUserProfile(
+        telegramAuthData.user.id,
+        telegramAuthData.user.email,
+        telegramUser.first_name || telegramUser.username || ''
+      );
+      await this.linkTelegramAccount(telegramUser);
+
+      return { user: telegramAuthData.user, mode: 'session', error: null };
     }
 
     // Если есть существующая сессия - используем её

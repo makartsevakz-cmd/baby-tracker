@@ -114,21 +114,14 @@ const registrationStates = new Map();
 function getStartInlineKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+      [{ text: '📝 Создать аккаунт', web_app: { url: WEB_APP_URL } }],
       [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
     ],
   };
 }
 
 function getRegistrationInlineKeyboard() {
-  return {
-    inline_keyboard: [
-      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
-      [{ text: '🔐 Регистрация через бот', callback_data: 'start_registration' }],
-      [{ text: '✅ Я уже зарегистрировалась в приложении', callback_data: 'check_registration' }],
-      [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
-    ],
-  };
+  return getStartInlineKeyboard();
 }
 
 async function sendFeaturesMessage(chatId) {
@@ -136,7 +129,7 @@ async function sendFeaturesMessage(chatId) {
 📖 *Что умеют приложение и бот*
 
 📱 *В приложении:*
-• регистрация и вход по email
+• создание аккаунта и профиль малыша
 • карточка малыша и журнал активностей
 • статистика, графики и история
 • настройка напоминаний
@@ -147,10 +140,10 @@ async function sendFeaturesMessage(chatId) {
 • переход в приложение в один тап
 • напоминания из приложения
 
-Если вы уже зарегистрировались в приложении, нажмите «Я уже зарегистрировалась в приложении» и привяжите аккаунт.
+Создайте аккаунт в приложении, затем возвращайтесь в бот для быстрых действий.
   `.trim(), {
     parse_mode: 'Markdown',
-    reply_markup: getRegistrationInlineKeyboard(),
+    reply_markup: getStartInlineKeyboard(),
   });
 }
 
@@ -934,17 +927,20 @@ bot.onText(/\/start/, async (msg) => {
     return;
   }
 
-  // НОВАЯ ЛОГИКА: Проверка регистрации
+  // Проверка регистрации
   const { registered } = await isUserRegistered(telegramUserId);
 
   if (!registered) {
     await bot.sendMessage(chatId, 
-      '👋 Добро пожаловать в Дневник малыша!\n\n' +
-      'Для начала работы вам нужно зарегистрироваться.\n\n' +
-      '🔐 Используйте команду /register для регистрации по email\n' +
-      'или откройте приложение:',
+      '👋 Добро пожаловать в «Дневник малыша»!\n\n' +
+      'Этот бот помогает быстро вести дневник прямо в Telegram:\n' +
+      '• запуск и остановка таймеров\n' +
+      '• быстрые записи (кормление, сон, подгузник и др.)\n' +
+      '• напоминания из приложения\n\n' +
+      '📱 В приложении доступны полный журнал, карточка малыша, статистика и настройки.\n\n' +
+      'Чтобы начать, создайте аккаунт (сразу откроется шаг добавления малыша):',
       {
-        reply_markup: getRegistrationInlineKeyboard()
+        reply_markup: getStartInlineKeyboard()
       }
     );
     return;
@@ -952,18 +948,7 @@ bot.onText(/\/start/, async (msg) => {
 
   await bot.sendMessage(chatId,
     '👶 Дневник малыша\n\n' +
-    '📱 Откройте приложение или используйте быстрые команды:',
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
-          [{ text: '🍼 Кормление', callback_data: 'quick_feeding' }],
-          [{ text: '💤 Сон', callback_data: 'quick_sleep' }],
-          [{ text: '🚽 Памперс', callback_data: 'quick_diaper' }],
-          [{ text: '📊 Статистика', callback_data: 'stats' }]
-        ]
-      }
-    }
+    'Готово! Используйте меню быстрых действий ниже или откройте приложение.'
   );
 
   // СУЩЕСТВУЮЩАЯ ЛОГИКА: Сохранение chat_id
@@ -1026,14 +1011,14 @@ bot.onText(/\/help/, (msg) => {
 **Команды:**
 /start - Открыть приложение
 /help - Эта справка
-/check_registration - Привязать уже существующий аккаунт
+
 
 Есть вопросы? Напишите нам!
   `.trim();
 
   bot.sendMessage(chatId, helpMessage, {
     parse_mode: 'Markdown',
-    reply_markup: getRegistrationInlineKeyboard()
+    reply_markup: getStartInlineKeyboard()
   });
 });
 
@@ -1043,51 +1028,43 @@ bot.onText(/\/help/, (msg) => {
 
 bot.onText(/\/register/, async (msg) => {
   const chatId = msg.chat.id;
-  const telegramUserId = msg.from.id;
-
-  const { registered } = await isUserRegistered(telegramUserId);
-
-  if (registered) {
-    await bot.sendMessage(chatId, '✅ Вы уже зарегистрированы!');
-    return;
-  }
-
-  await startRegistrationFlow(chatId, telegramUserId, msg.from.username);
+  await bot.sendMessage(chatId,
+    'Создание аккаунта доступно в приложении.\n\n' +
+    'Нажмите кнопку ниже:',
+    { reply_markup: getStartInlineKeyboard() }
+  );
 });
 
 bot.onText(/\/check_registration/, async (msg) => {
   const chatId = msg.chat.id;
-  const telegramUserId = msg.from.id;
-
-  const { registered } = await isUserRegistered(telegramUserId);
+  const { registered } = await isUserRegistered(msg.from.id);
   if (registered) {
-    await bot.sendMessage(chatId, '✅ Вижу, что аккаунт уже привязан. Можно продолжать работу!', {
+    await bot.sendMessage(chatId, '✅ Аккаунт найден. Можно пользоваться ботом.', {
       reply_markup: getMainMenuKeyboard(),
     });
+    await sendMainMenuMessage(chatId);
     return;
   }
 
-  await startLinkFlow(chatId, telegramUserId, msg.from.username);
+  await bot.sendMessage(chatId,
+    '⚠️ Аккаунт пока не найден.\n\n' +
+    'Сначала создайте аккаунт в приложении, затем вернитесь в бот.',
+    { reply_markup: getStartInlineKeyboard() }
+  );
 });
 
 bot.onText(/\/cancel/, async (msg) => {
   const chatId = msg.chat.id;
-  const telegramUserId = msg.from.id;
-  
-  registrationStates.delete(telegramUserId);
-  await bot.sendMessage(chatId, '❌ Регистрация отменена.');
+  await bot.sendMessage(chatId, 'ℹ️ Регистрация через бота отключена.', {
+    reply_markup: getStartInlineKeyboard(),
+  });
 });
 
 bot.onText(/\/skip/, async (msg) => {
   const chatId = msg.chat.id;
-  const telegramUserId = msg.from.id;
-  
-  const state = registrationStates.get(telegramUserId);
-  
-  if (state && state.step === 'awaiting_name') {
-    state.fullName = '';
-    await completeRegistration(chatId, telegramUserId, state);
-  }
+  await bot.sendMessage(chatId, 'ℹ️ Регистрация через бота отключена.', {
+    reply_markup: getStartInlineKeyboard(),
+  });
 });
 
 bot.on('callback_query', async (query) => {
@@ -1103,7 +1080,10 @@ bot.on('callback_query', async (query) => {
 
   if (query.data === 'start_registration') {
     await bot.answerCallbackQuery(query.id);
-    await startRegistrationFlow(chatId, telegramUserId, query.from.username);
+    await bot.sendMessage(chatId,
+      'Создание аккаунта доступно только в приложении.',
+      { reply_markup: getStartInlineKeyboard() }
+    );
     return;
   }
 
@@ -1112,7 +1092,7 @@ bot.on('callback_query', async (query) => {
 
     const { registered } = await isUserRegistered(telegramUserId);
     if (registered) {
-      await bot.sendMessage(chatId, '✅ Регистрация найдена. Продолжаем 👇', {
+      await bot.sendMessage(chatId, '✅ Аккаунт найден. Продолжаем 👇', {
         reply_markup: getMainMenuKeyboard(),
       });
       await sendMainMenuMessage(chatId);
@@ -1120,12 +1100,11 @@ bot.on('callback_query', async (query) => {
     }
 
     await bot.sendMessage(chatId,
-      'Пока не вижу привязку Telegram к аккаунту.\n' +
-      'Введите email и пароль от приложения, чтобы привязать аккаунт.', {
-        reply_markup: getRegistrationInlineKeyboard(),
+      'Аккаунт пока не найден.\n' +
+      'Откройте приложение и создайте аккаунт.', {
+        reply_markup: getStartInlineKeyboard(),
       }
     );
-    await startLinkFlow(chatId, telegramUserId, query.from.username);
     return;
   }
 
@@ -1133,13 +1112,13 @@ bot.on('callback_query', async (query) => {
 
   if (!registered && query.data?.startsWith('qa:')) {
     await bot.answerCallbackQuery(query.id, {
-      text: '⚠️ Сначала завершите регистрацию или проверьте привязку аккаунта.',
+      text: '⚠️ Сначала создайте аккаунт в приложении.',
       show_alert: true
     });
 
     await bot.sendMessage(chatId,
-      'Чтобы продолжить, выберите один из вариантов:', {
-        reply_markup: getRegistrationInlineKeyboard(),
+      'Чтобы продолжить, откройте приложение:', {
+        reply_markup: getStartInlineKeyboard(),
       }
     );
     return;
@@ -1255,90 +1234,6 @@ bot.on('callback_query', async (query) => {
 });
 
 bot.on('message', async (msg) => {
-  // НОВАЯ ЛОГИКА: Обработка регистрации
-  const text = msg.text;
-  const telegramUserId = msg.from.id;
-  const chatId = msg.chat.id;
-  
-  const state = registrationStates.get(telegramUserId);
-  if (state && text && !text.startsWith('/')) {
-    try {
-      // ШАГ 1: Ввод email
-      if (state.step === 'awaiting_email') {
-        const email = normalizeEmail(text);
-        
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          await bot.sendMessage(chatId, '❌ Некорректный email. Попробуйте ещё раз:');
-          return;
-        }
-
-        state.email = email;
-        state.step = 'awaiting_password';
-        registrationStates.set(telegramUserId, state);
-
-        await bot.sendMessage(chatId,
-          '✅ Email принят: ' + email + '\n\n' +
-          'Шаг 2/3: Придумайте пароль (минимум 6 символов)'
-        );
-        return;
-      }
-
-      // ШАГ 2: Ввод пароля
-      if (state.step === 'awaiting_password') {
-        if (text.length < 6) {
-          await bot.sendMessage(chatId, '❌ Пароль слишком короткий. Минимум 6 символов:');
-          return;
-        }
-
-        state.password = text;
-        state.step = 'awaiting_name';
-        registrationStates.set(telegramUserId, state);
-
-        await bot.sendMessage(chatId,
-          '✅ Пароль принят\n\n' +
-          'Шаг 3/3: Введите ваше имя (или нажмите /skip)'
-        );
-        return;
-      }
-
-      // ШАГ 3: Ввод имени
-      if (state.step === 'awaiting_name') {
-        state.fullName = text;
-        await completeRegistration(chatId, telegramUserId, state);
-        return;
-      }
-
-      // ПРИВЯЗКА СУЩЕСТВУЮЩЕГО АККАУНТА: email
-      if (state.step === 'awaiting_link_email') {
-        const email = normalizeEmail(text);
-
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-          await bot.sendMessage(chatId, '❌ Некорректный email. Попробуйте ещё раз:');
-          return;
-        }
-
-        state.email = email;
-        state.step = 'awaiting_link_password';
-        registrationStates.set(telegramUserId, state);
-
-        await bot.sendMessage(chatId, 'Шаг 2/2: Введите пароль от аккаунта в приложении.');
-        return;
-      }
-
-      // ПРИВЯЗКА СУЩЕСТВУЮЩЕГО АККАУНТА: пароль
-      if (state.step === 'awaiting_link_password') {
-        state.password = text;
-        await completeLinkExistingAccount(chatId, telegramUserId, state);
-        return;
-      }
-    } catch (error) {
-      console.error('Error in registration flow:', error);
-      await bot.sendMessage(chatId, '❌ Произошла ошибка. Попробуйте ещё раз: /register');
-      registrationStates.delete(telegramUserId);
-      return;
-    }
-  }
-
   // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД bot.on('message')
   if (msg.text && msg.text.startsWith('/')) return;
   
