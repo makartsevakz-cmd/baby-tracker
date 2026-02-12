@@ -14,7 +14,6 @@ class CacheService {
     this.namespace = 'global';
     this.isReady = false;
     this.memoryStore = new Map();
-    this.localStorage = null;
     this.initPromise = this._init();
   }
 
@@ -26,8 +25,6 @@ class CacheService {
       } else {
         console.warn('Capacitor Preferences not available, fallback to in-memory cache');
       }
-    } else if (typeof globalThis?.window?.localStorage !== 'undefined') {
-      this.localStorage = globalThis.window.localStorage;
     }
 
     this.isReady = true;
@@ -261,21 +258,12 @@ class CacheService {
       return value;
     }
 
-    if (this.localStorage) {
-      return this.localStorage.getItem(key);
-    }
-
     return this.memoryStore.has(key) ? this.memoryStore.get(key) : null;
   }
 
   async _setItem(key, value) {
     if (this.platform === 'android' && this.Preferences) {
       await this.Preferences.set({ key, value });
-      return;
-    }
-
-    if (this.localStorage) {
-      this.localStorage.setItem(key, value);
       return;
     }
 
@@ -288,11 +276,6 @@ class CacheService {
       return;
     }
 
-    if (this.localStorage) {
-      this.localStorage.removeItem(key);
-      return;
-    }
-
     this.memoryStore.delete(key);
   }
 
@@ -300,10 +283,6 @@ class CacheService {
     if (this.platform === 'android' && this.Preferences) {
       const { keys } = await this.Preferences.keys();
       return keys;
-    }
-
-    if (this.localStorage) {
-      return Object.keys(this.localStorage);
     }
 
     return Array.from(this.memoryStore.keys());
