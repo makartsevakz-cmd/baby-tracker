@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import notificationService from './services/notificationService.js';
@@ -482,6 +482,53 @@ const ActivityTracker = () => {
       setEditingId(null);
     }
   }, [view, tg]);
+
+  const navigateTo = useCallback((nextView) => {
+    if (tg) tg.HapticFeedback?.impactOccurred('light');
+    setView(nextView);
+
+    if (nextView !== 'add') {
+      setSelectedActivity(null);
+      setFormData({});
+      setEditingId(null);
+    }
+  }, [tg]);
+
+  const renderBottomNavigation = () => (
+    <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-purple-100 bg-white/95 backdrop-blur-sm">
+      <div className="max-w-2xl mx-auto px-4 py-2">
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            onClick={() => navigateTo('main')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'main' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <Home className="w-5 h-5 mb-1" />
+            Главная
+          </button>
+          <button
+            onClick={() => navigateTo('notifications')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'notifications' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <Bell className="w-5 h-5 mb-1" />
+            Уведомления
+          </button>
+          <button
+            onClick={() => navigateTo('stats')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'stats' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5 mb-1" />
+            Статистика
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   const getTotalDuration = (timerType) => {
     const activeTimerStart = Number(timers[timerType]);
@@ -1606,7 +1653,8 @@ const ActivityTracker = () => {
     }
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
         {/* Отступ для Telegram заголовка */}
         <div className="h-16" />
         
@@ -1883,6 +1931,8 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
+      {renderBottomNavigation()}
+    </>
     );
   }
 
@@ -1947,7 +1997,8 @@ const ActivityTracker = () => {
 
   if (view === 'profile') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
         {/* Отступ для Telegram заголовка */}
         <div className="h-16" />
         
@@ -2245,6 +2296,8 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
+      {renderBottomNavigation()}
+    </>
     );
   }
 
@@ -2380,7 +2433,8 @@ const ActivityTracker = () => {
     const weekStats = getWeekStats();
     
     return (
-      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
         {/* Отступ для Telegram заголовка */}
         <div className="h-16" />
         
@@ -2521,87 +2575,75 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
+      {renderBottomNavigation()}
+    </>
     );
   }
 
   if (view === 'notifications') {
     return (
-      <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-500">Загрузка уведомлений...</div>}>
-        <NotificationsView
-          tg={tg}
-          onBack={() => {
-            if (tg) tg.HapticFeedback?.impactOccurred('light');
-            setView('main');
-          }}
-          activityTypes={activityTypes}
-          notificationHelpers={notificationHelpers}
-          isAuthenticated={isAuthenticated}
-        />
-      </Suspense>
+      <>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-500">Загрузка уведомлений...</div>}>
+          <NotificationsView
+            tg={tg}
+            onBack={() => {
+              if (tg) tg.HapticFeedback?.impactOccurred('light');
+              setView('main');
+            }}
+            showBackButton={false}
+            activityTypes={activityTypes}
+            notificationHelpers={notificationHelpers}
+            isAuthenticated={isAuthenticated}
+          />
+        </Suspense>
+        {renderBottomNavigation()}
+      </>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-6">
+    <>
+      <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-28">
       {/* Отступ для Telegram заголовка */}
-      <div className="h-14" />
+      <div className="h-16" />
       
       <div className="max-w-2xl mx-auto px-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 bg-white rounded-2xl shadow-lg p-4">
-          <div className="flex items-center">
-            <Baby className="w-6 h-6 mr-2 text-purple-600" />
-            <div>
-              <h1 className="text-xl font-bold text-gray-800">
-                {babyProfile.name || 'Трекер малыша'}
-              </h1>
-              {isAuthenticated && (
-                <div className="flex items-center text-xs text-green-600 mt-1">
-                  <div className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></div>
-                  Синхронизировано
-                </div>
-              )}
-              {!isAuthenticated && (
-                <div className="flex items-center text-xs text-gray-500 mt-1">
-                  <div className="w-2 h-2 bg-gray-400 rounded-full mr-1"></div>
-                  Локальное хранилище
-                </div>
+          <button
+            onClick={() => navigateTo('profile')}
+            className="flex items-center text-left rounded-xl p-1 -m-1 active:scale-[0.98] transition-transform"
+            title="Открыть профиль малыша"
+          >
+            <div className="w-11 h-11 rounded-full bg-purple-100 flex items-center justify-center overflow-hidden mr-3">
+              {babyProfile.photo ? (
+                <img src={babyProfile.photo} alt="Фото малыша" className="w-full h-full object-cover" />
+              ) : (
+                <Baby className="w-6 h-6 text-purple-600" />
               )}
             </div>
-          </div>
-          <div className="flex gap-2">
-            <button 
-              onClick={() => { 
-                if (tg) tg.HapticFeedback?.impactOccurred('light'); 
-                setView('profile'); 
-              }} 
-              className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
-              title="Профиль малыша"
-            >
-              <Baby className="w-5 h-5" />
-            </button>
-            
-            <button 
-              onClick={() => { 
-                if (tg) tg.HapticFeedback?.impactOccurred('light'); 
-                setView('notifications'); 
-              }} 
-              className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
-              title="Уведомления"
-            >
-              <Bell className="w-5 h-5" />
-            </button>
-            
-            <button 
-              onClick={() => { 
-                if (tg) tg.HapticFeedback?.impactOccurred('light'); 
-                setView('stats'); 
-              }} 
-              className="bg-purple-500 text-white p-3 rounded-lg active:scale-95 transition-transform"
-              title="Статистика"
-            >
-              <BarChart3 className="w-5 h-5" />
-            </button>
+            <div>
+              <h1 className="text-xl font-bold text-gray-800 leading-tight">
+                {babyProfile.name || 'Трекер малыша'}
+              </h1>
+              <div className="text-xs text-gray-500 mt-1">
+                {babyProfile.birthDate ? `${babyProfile.birthDate} · ${calculateAge()}` : 'Добавьте дату рождения'}
+              </div>
+            </div>
+          </button>
+          <div>
+            {isAuthenticated && (
+              <div className="flex items-center text-xs text-green-600 mt-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full mr-1 animate-pulse"></div>
+                Синхронизировано
+              </div>
+            )}
+            {!isAuthenticated && (
+              <div className="flex items-center text-xs text-gray-500 mt-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full mr-1"></div>
+                Локальное хранилище
+              </div>
+            )}
           </div>
         </div>
 
@@ -2715,7 +2757,9 @@ const ActivityTracker = () => {
           </div>
         </div>
       </div>
-    </div>
+      </div>
+      {renderBottomNavigation()}
+    </>
   );
 };
 
