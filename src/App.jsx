@@ -1,9 +1,22 @@
-import React, { useState, useEffect, useCallback, useMemo, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2 } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import notificationService from './services/notificationService.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
+const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
+
+const buildUserNamespace = (user, telegramUser) => {
+  if (user?.id) {
+    return `user_${user.id}`;
+  }
+
+  if (telegramUser?.id) {
+    return `telegram_${telegramUser.id}`;
+  }
+
+  return 'global';
+};
 
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
@@ -32,6 +45,9 @@ const ActivityTracker = () => {
   const [isSavingProfile, setIsSavingProfile] = useState(false); // Profile save state
   const [isSavingGrowth, setIsSavingGrowth] = useState(false); // Growth save state
   const [notificationHelpers, setNotificationHelpers] = useState(null);
+  const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
+  const [isOnboardingStatusResolved, setIsOnboardingStatusResolved] = useState(false);
+  const activeNamespaceRef = useRef('global');
 
   const activityTypes = {
     breastfeeding: { icon: Baby, label: 'Кормление грудью', color: 'bg-pink-100 text-pink-600' },
@@ -241,6 +257,7 @@ const ActivityTracker = () => {
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setAuthError(null);
+    setIsOnboardingStatusResolved(false);
     
     // Set a timeout to prevent infinite loading
     const loadTimeout = setTimeout(() => {
@@ -259,7 +276,7 @@ const ActivityTracker = () => {
 
       if (hasSupabase) {
         const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        cacheService.setNamespace(telegramUser?.id ? `telegram_${telegramUser.id}` : 'global');
+        cacheService.setNamespace(buildUserNamespace(null, telegramUser));
 
         try {
           const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({ telegramUser });
@@ -274,13 +291,34 @@ const ActivityTracker = () => {
           }
 
           setIsAuthenticated(Boolean(user));
+          const nextNamespace = buildUserNamespace(user, telegramUser);
+          const previousNamespace = activeNamespaceRef.current;
+          cacheService.setNamespace(nextNamespace);
+
+          if (previousNamespace !== nextNamespace) {
+            activeNamespaceRef.current = nextNamespace;
+            setActivities([]);
+            setTimers({});
+            setPausedTimers({});
+            setTimerMeta({});
+            setGrowthData([]);
+            setBabyProfile({ name: '', birthDate: '', photo: null });
+            setView('main');
+            setSelectedActivity(null);
+            setFormData({});
+            setEditingId(null);
+          }
+
+          const onboardingFlag = await cacheService.get(ONBOARDING_COMPLETED_KEY);
+          setIsOnboardingCompleted(Boolean(onboardingFlag));
 
           if (mode === 'anonymous') {
             console.log('Signed in with anonymous Supabase session');
           }
 
+          let initialData = null;
           try {
-            const initialData = supabaseModule.appDataHelpers
+            initialData = supabaseModule.appDataHelpers
               ? await supabaseModule.appDataHelpers.getInitialData()
               : {
                   profile: await supabaseModule.babyHelpers.getProfile(),
@@ -289,11 +327,22 @@ const ActivityTracker = () => {
                 };
 
             if (initialData.profile?.data) {
-              setBabyProfile({
+              const profile = {
                 name: initialData.profile.data.name || '',
                 birthDate: initialData.profile.data.birth_date || '',
                 photo: initialData.profile.data.photo_url || null,
+              };
+              setBabyProfile({
+                name: profile.name,
+                birthDate: profile.birthDate,
+                photo: profile.photo,
               });
+
+              await Promise.all([
+                cacheService.set('baby_profile', profile, null),
+                cacheService.set(ONBOARDING_COMPLETED_KEY, true, null),
+              ]);
+              setIsOnboardingCompleted(true);
             }
 
             if (initialData.activities?.data) {
@@ -318,22 +367,56 @@ const ActivityTracker = () => {
           if (savedTimerMeta) setTimerMeta(savedTimerMeta);
 
           await notificationService.initialize();
+
+          if (!initialData?.profile?.data) {
+            // Кейс: локальный кэш очищен (переустановка Telegram/WebView),
+            // но профиль уже существует в Supabase. Проверяем ещё раз напрямую,
+            // чтобы не показать онбординг повторно существующему пользователю.
+            try {
+              const profileResult = await supabaseModule.babyHelpers.getProfile();
+              if (profileResult?.data) {
+                const fallbackProfile = {
+                  name: profileResult.data.name || '',
+                  birthDate: profileResult.data.birth_date || '',
+                  photo: profileResult.data.photo_url || null,
+                };
+
+                setBabyProfile(fallbackProfile);
+                await Promise.all([
+                  cacheService.set('baby_profile', fallbackProfile, null),
+                  cacheService.set(ONBOARDING_COMPLETED_KEY, true, null),
+                ]);
+                setIsOnboardingCompleted(true);
+              }
+            } catch (profileError) {
+              console.error('Fallback profile check error:', profileError);
+            }
+          }
+
+          setIsOnboardingStatusResolved(true);
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
           setAuthError('Supabase недоступен - используется кеш');
           await loadFromCache();
+          setIsOnboardingStatusResolved(true);
         }
       } else {
         // Not in Telegram or Supabase not configured, use cache
         const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        cacheService.setNamespace(telegramUser?.id ? `telegram_${telegramUser.id}` : 'global');
+        const nextNamespace = buildUserNamespace(null, telegramUser);
+        cacheService.setNamespace(nextNamespace);
+        activeNamespaceRef.current = nextNamespace;
+        const onboardingFlag = await cacheService.get(ONBOARDING_COMPLETED_KEY);
+        setIsOnboardingCompleted(Boolean(onboardingFlag));
         console.log('Using cache fallback (no Telegram or Supabase config)');
         await loadFromCache();
+        setIsOnboardingStatusResolved(true);
       }
     } catch (error) {
       console.error('Load data error:', error);
       setAuthError('Ошибка загрузки данных');
       await loadFromCache();
+      setIsOnboardingStatusResolved(true);
     } finally {
       clearTimeout(loadTimeout);
       setIsLoading(false);
@@ -714,7 +797,7 @@ const ActivityTracker = () => {
   }, [view, babyProfile]);
 
   useEffect(() => {
-    if (!isLoading && !hasBabyProfile && view === 'main') {
+    if (!isLoading && isOnboardingStatusResolved && !isOnboardingCompleted && !hasBabyProfile && view === 'main') {
       setProfileForm(prev => ({
         ...prev,
         name: babyProfile.name || '',
@@ -723,7 +806,7 @@ const ActivityTracker = () => {
       }));
       setView('onboarding');
     }
-  }, [isLoading, hasBabyProfile, view, babyProfile]);
+  }, [isLoading, isOnboardingStatusResolved, isOnboardingCompleted, hasBabyProfile, view, babyProfile]);
 
   useEffect(() => {
     if (view !== 'notifications' || notificationHelpers) return;
@@ -949,14 +1032,26 @@ const ActivityTracker = () => {
           birthDate: data.birth_date || '',
           photo: data.photo_url || null,
         });
+        await Promise.all([
+          cacheService.set('baby_profile', {
+            name: data.name || '',
+            birthDate: data.birth_date || '',
+            photo: data.photo_url || null,
+          }, null),
+          cacheService.set(ONBOARDING_COMPLETED_KEY, true, null),
+        ]);
       } else {
         const trimmedProfile = {
           ...profileForm,
           name: profileForm.name.trim(),
         };
         setBabyProfile(trimmedProfile);
-        await cacheService.set('baby_profile', trimmedProfile, CACHE_TTL_SECONDS);
+        await Promise.all([
+          cacheService.set('baby_profile', trimmedProfile, null),
+          cacheService.set(ONBOARDING_COMPLETED_KEY, true, null),
+        ]);
       }
+      setIsOnboardingCompleted(true);
       setView('main');
     } catch (error) {
       console.error('Save profile error:', error);
