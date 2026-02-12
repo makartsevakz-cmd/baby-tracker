@@ -115,6 +115,7 @@ function getStartInlineKeyboard() {
   return {
     inline_keyboard: [
       [{ text: '📝 Создать аккаунт', web_app: { url: WEB_APP_URL } }],
+      [{ text: '✅ Проверить аккаунт', callback_data: 'check_registration' }],
       [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
     ],
   };
@@ -160,6 +161,25 @@ async function startRegistrationFlow(chatId, telegramUserId, username) {
     'Формат: name@example.com\n\n' +
     'Или отмените: /cancel'
   );
+}
+
+
+async function sendRegistrationStatus(chatId, telegramUserId, successText = '✅ Аккаунт найден. Можно пользоваться ботом.') {
+  const { registered } = await isUserRegistered(telegramUserId);
+
+  if (registered) {
+    await bot.sendMessage(chatId, successText, {
+      reply_markup: getMainMenuKeyboard(),
+    });
+    await sendMainMenuMessage(chatId);
+    return true;
+  }
+
+  await bot.sendMessage(chatId,
+    '⚠️ Аккаунт пока не найден.\n\nСначала создайте аккаунт в приложении, затем нажмите «Проверить аккаунт».',
+    { reply_markup: getStartInlineKeyboard() }
+  );
+  return false;
 }
 
 async function startLinkFlow(chatId, telegramUserId, username) {
@@ -1037,20 +1057,7 @@ bot.onText(/\/register/, async (msg) => {
 
 bot.onText(/\/check_registration/, async (msg) => {
   const chatId = msg.chat.id;
-  const { registered } = await isUserRegistered(msg.from.id);
-  if (registered) {
-    await bot.sendMessage(chatId, '✅ Аккаунт найден. Можно пользоваться ботом.', {
-      reply_markup: getMainMenuKeyboard(),
-    });
-    await sendMainMenuMessage(chatId);
-    return;
-  }
-
-  await bot.sendMessage(chatId,
-    '⚠️ Аккаунт пока не найден.\n\n' +
-    'Сначала создайте аккаунт в приложении, затем вернитесь в бот.',
-    { reply_markup: getStartInlineKeyboard() }
-  );
+  await sendRegistrationStatus(chatId, msg.from.id);
 });
 
 bot.onText(/\/cancel/, async (msg) => {
@@ -1236,7 +1243,23 @@ bot.on('callback_query', async (query) => {
 bot.on('message', async (msg) => {
   // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД bot.on('message')
   if (msg.text && msg.text.startsWith('/')) return;
-  
+
+  const chatId = msg.chat.id;
+  const telegramUserId = msg.from.id;
+
+  if (msg.text === '✅ Проверить аккаунт') {
+    await sendRegistrationStatus(chatId, telegramUserId);
+    return;
+  }
+
+  const { registered } = await isUserRegistered(telegramUserId);
+  if (!registered) {
+    await bot.sendMessage(chatId,
+      'У вас пока нет подключённого аккаунта.\nНажмите кнопку ниже после регистрации в приложении.',
+      { reply_markup: getStartInlineKeyboard() }
+    );
+    return;
+  }
 
   const session = getSession(chatId);
   const context = session.context || await getContext(msg);
