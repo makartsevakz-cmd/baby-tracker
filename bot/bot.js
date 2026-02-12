@@ -81,24 +81,7 @@ function releaseLock(notificationId, scheduledMinute) {
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РЕГИСТРАЦИИ
 // ========================================
 
-const formatPhone = (phone) => {
-  let cleaned = phone.replace(/[^\d+]/g, '');
-  if (cleaned.startsWith('8')) {
-    cleaned = '+7' + cleaned.slice(1);
-  }
-  if (cleaned.startsWith('7') && !cleaned.startsWith('+')) {
-    cleaned = '+' + cleaned;
-  }
-  if (!cleaned.startsWith('+')) {
-    cleaned = '+7' + cleaned;
-  }
-  return cleaned;
-};
-
-const phoneToEmail = (phone) => {
-  const cleaned = formatPhone(phone).replace(/\+/g, '');
-  return `${cleaned}@babydiary.local`;
-};
+const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
 
 async function isUserRegistered(telegramUserId) {
   if (!supabase) return { registered: false, authUserId: null };
@@ -1006,14 +989,14 @@ bot.onText(/\/register/, async (msg) => {
   }
 
   registrationStates.set(telegramUserId, { 
-    step: 'awaiting_phone',
+    step: 'awaiting_email',
     username: msg.from.username 
   });
 
   await bot.sendMessage(chatId,
     '📱 Регистрация\n\n' +
-    'Шаг 1/3: Введите ваш номер телефона\n' +
-    'Формат: +7 999 123 45 67\n\n' +
+    'Шаг 1/3: Введите ваш email\n' +
+    'Формат: name@example.com\n\n' +
     'Или отмените: /cancel'
   );
 });
@@ -1046,14 +1029,14 @@ bot.on('callback_query', async (query) => {
     const telegramUserId = query.from.id;
     
     registrationStates.set(telegramUserId, { 
-      step: 'awaiting_phone',
+      step: 'awaiting_email',
       username: query.from.username 
     });
     
     await bot.sendMessage(chatId,
       '📱 Регистрация\n\n' +
-      'Шаг 1/3: Введите ваш номер телефона\n' +
-      'Формат: +7 999 123 45 67\n\n' +
+      'Шаг 1/3: Введите ваш email\n' +
+      'Формат: name@example.com\n\n' +
       'Или отмените: /cancel'
     );
     
@@ -1191,21 +1174,21 @@ bot.on('message', async (msg) => {
   const state = registrationStates.get(telegramUserId);
   if (state && text && !text.startsWith('/')) {
     try {
-      // ШАГ 1: Ввод телефона
-      if (state.step === 'awaiting_phone') {
-        const phone = formatPhone(text);
+      // ШАГ 1: Ввод email
+      if (state.step === 'awaiting_email') {
+        const email = normalizeEmail(text);
         
-        if (phone.length < 12) {
-          await bot.sendMessage(chatId, '❌ Некорректный номер. Попробуйте ещё раз:');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          await bot.sendMessage(chatId, '❌ Некорректный email. Попробуйте ещё раз:');
           return;
         }
 
-        state.phone = phone;
+        state.email = email;
         state.step = 'awaiting_password';
         registrationStates.set(telegramUserId, state);
 
         await bot.sendMessage(chatId,
-          '✅ Номер принят: ' + phone + '\n\n' +
+          '✅ Email принят: ' + email + '\n\n' +
           'Шаг 2/3: Придумайте пароль (минимум 6 символов)'
         );
         return;
@@ -1345,10 +1328,9 @@ async function completeRegistration(chatId, telegramUserId, state) {
   try {
     await bot.sendMessage(chatId, '⏳ Создаём ваш аккаунт...');
 
-    const { phone, password, fullName = '', username } = state;
-    const email = phoneToEmail(phone);
+    const { email, password, fullName = '', username } = state;
 
-    console.log('📱 Регистрация:', { phone, email });
+    console.log('📱 Регистрация:', { email });
 
     // Создаём пользователя через Supabase Auth (service key!)
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -1356,9 +1338,8 @@ async function completeRegistration(chatId, telegramUserId, state) {
       password: password,
       email_confirm: true,
       user_metadata: {
-        phone: phone,
         full_name: fullName,
-        auth_method: 'phone',
+        auth_method: 'email',
       }
     });
 
@@ -1367,7 +1348,7 @@ async function completeRegistration(chatId, telegramUserId, state) {
       
       if (authError.message.includes('already registered')) {
         await bot.sendMessage(chatId, 
-          '❌ Этот номер уже зарегистрирован.\n\n' +
+          '❌ Этот email уже зарегистрирован.\n\n' +
           'Используйте приложение для входа.'
         );
       } else {
@@ -1385,7 +1366,6 @@ async function completeRegistration(chatId, telegramUserId, state) {
       .from('user_profiles')
       .insert({
         id: authUserId,
-        phone: phone,
         full_name: fullName,
       });
 
