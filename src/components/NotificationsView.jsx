@@ -7,6 +7,7 @@ import { Platform } from '../utils/platform.js';
 const NotificationsView = ({ 
   tg, 
   onBack, 
+  showBackButton = true,
   activityTypes,
   notificationHelpers,
   isAuthenticated 
@@ -468,12 +469,14 @@ const NotificationsView = ({
         {/* Header */}
         <div className="flex items-center justify-between mb-4 bg-white rounded-2xl shadow-lg p-4">
           <div className="flex items-center">
-            <button 
-              onClick={onBack} 
-              className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
-            >
-              <ArrowLeft className="w-5 h-5" />
-            </button>
+            {showBackButton && (
+              <button 
+                onClick={onBack} 
+                className="mr-3 p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200 transition-colors"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+            )}
             <Bell className="w-6 h-6 mr-2 text-purple-600" />
             <h2 className="text-xl font-semibold">Уведомления</h2>
           </div>
