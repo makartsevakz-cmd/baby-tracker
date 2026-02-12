@@ -114,8 +114,8 @@ const registrationStates = new Map();
 function getStartInlineKeyboard() {
   return {
     inline_keyboard: [
-      [{ text: '📝 Создать аккаунт', web_app: { url: WEB_APP_URL } }],
-      [{ text: '✅ Проверить аккаунт', callback_data: 'check_registration' }],
+      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+      [{ text: '🔄 Обновить статус', callback_data: 'check_registration' }],
       [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
     ],
   };
@@ -563,7 +563,7 @@ function quickActivitiesKeyboard() {
 }
 
 async function sendMainMenuMessage(chatId) {
-  return bot.sendMessage(chatId, `👶 Трекер малыша
+  return bot.sendMessage(chatId, `👋 Привет! Это трекер малыша.
 
 Используйте нижнее меню для быстрых действий.`, {
     reply_markup: getMainMenuKeyboard(),
@@ -937,39 +937,13 @@ bot.onText(/\/start/, async (msg) => {
   console.log('📱 /start from:', telegramUserId);
 
   if (!supabase) {
-    await bot.sendMessage(chatId, 
-      '👋 Добро пожаловать!\n\n' +
-      'Откройте приложение:',
-      {
-        reply_markup: getStartInlineKeyboard()
-      }
-    );
-    return;
-  }
-
-  // Проверка регистрации
-  const { registered } = await isUserRegistered(telegramUserId);
-
-  if (!registered) {
-    await bot.sendMessage(chatId, 
+    await bot.sendMessage(chatId,
       '👋 Добро пожаловать в «Дневник малыша»!\n\n' +
-      'Этот бот помогает быстро вести дневник прямо в Telegram:\n' +
-      '• запуск и остановка таймеров\n' +
-      '• быстрые записи (кормление, сон, подгузник и др.)\n' +
-      '• напоминания из приложения\n\n' +
-      '📱 В приложении доступны полный журнал, карточка малыша, статистика и настройки.\n\n' +
-      'Чтобы начать, создайте аккаунт (сразу откроется шаг добавления малыша):',
-      {
-        reply_markup: getStartInlineKeyboard()
-      }
+      'Откройте приложение, чтобы начать вести записи.',
+      { reply_markup: getStartInlineKeyboard() }
     );
     return;
   }
-
-  await bot.sendMessage(chatId,
-    '👶 Дневник малыша\n\n' +
-    'Готово! Используйте меню быстрых действий ниже или откройте приложение.'
-  );
 
   // СУЩЕСТВУЮЩАЯ ЛОГИКА: Сохранение chat_id
   if (supabase) {
@@ -990,6 +964,17 @@ bot.onText(/\/start/, async (msg) => {
     } catch (err) {
       console.error('Error saving chat_id:', err);
     }
+  }
+
+  const { registered } = await isUserRegistered(telegramUserId);
+
+  if (!registered) {
+    await bot.sendMessage(chatId,
+      '👋 Добро пожаловать в «Дневник малыша»!\n\n' +
+      'Если вы заходите впервые, просто откройте приложение — аккаунт будет создан автоматически и привяжется к Telegram.',
+      { reply_markup: getStartInlineKeyboard() }
+    );
+    return;
   }
 
   await sendMainMenuMessage(chatId);
@@ -1247,7 +1232,7 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const telegramUserId = msg.from.id;
 
-  if (msg.text === '✅ Проверить аккаунт') {
+  if (msg.text === '✅ Проверить аккаунт' || msg.text === '🔄 Обновить статус') {
     await sendRegistrationStatus(chatId, telegramUserId);
     return;
   }
