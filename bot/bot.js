@@ -856,6 +856,21 @@ bot.onText(/\/start/, async (msg) => {
 
   console.log('📱 /start from:', telegramUserId);
 
+  if (!supabase) {
+    await bot.sendMessage(chatId, 
+      '👋 Добро пожаловать!\n\n' +
+      'Откройте приложение:',
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]
+          ]
+        }
+      }
+    );
+    return;
+  }
+
   // НОВАЯ ЛОГИКА: Проверка регистрации
   const { registered } = await isUserRegistered(telegramUserId);
 
@@ -876,6 +891,22 @@ bot.onText(/\/start/, async (msg) => {
     );
     return;
   }
+
+  await bot.sendMessage(chatId,
+    '👶 Дневник малыша\n\n' +
+    '📱 Откройте приложение или используйте быстрые команды:',
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+          [{ text: '🍼 Кормление', callback_data: 'quick_feeding' }],
+          [{ text: '💤 Сон', callback_data: 'quick_sleep' }],
+          [{ text: '🚽 Памперс', callback_data: 'quick_diaper' }],
+          [{ text: '📊 Статистика', callback_data: 'stats' }]
+        ]
+      }
+    }
+  );
 
   // СУЩЕСТВУЮЩАЯ ЛОГИКА: Сохранение chat_id
   if (supabase) {
@@ -1207,6 +1238,7 @@ bot.on('message', async (msg) => {
   // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД bot.on('message')
   if (msg.text && msg.text.startsWith('/')) return;
   
+
   const session = getSession(chatId);
   const context = session.context || await getContext(msg);
   session.context = context;
