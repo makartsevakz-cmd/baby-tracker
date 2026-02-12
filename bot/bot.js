@@ -374,11 +374,11 @@ ${notification.message ? `\n💬 ${notification.message}` : ''}
 async function resolveChatId(userId) {
   if (!supabase) return null;
 
-  // 1) Прямое соответствие auth user id -> chat_id
+  // 1) Основной сценарий: auth_user_id -> chat_id
   const { data: directMapping } = await supabase
     .from('user_telegram_mapping')
     .select('chat_id')
-    .eq('user_id', userId)
+    .eq('auth_user_id', userId)
     .maybeSingle();
 
   if (directMapping?.chat_id) {
@@ -549,12 +549,12 @@ async function resolveAppUserIdByChat(chatId, telegramUserId) {
 
   const { data: mapping } = await supabase
     .from('user_telegram_mapping')
-    .select('user_id')
+    .select('auth_user_id')
     .eq('chat_id', chatId)
     .maybeSingle();
 
-  if (mapping?.user_id && isUuid(mapping.user_id)) {
-    return mapping.user_id;
+  if (mapping?.auth_user_id && isUuid(mapping.auth_user_id)) {
+    return mapping.auth_user_id;
   }
 
   if (!telegramUserId) return null;
@@ -570,7 +570,15 @@ async function resolveAppUserIdByChat(chatId, telegramUserId) {
 
     await supabase
       .from('user_telegram_mapping')
-      .upsert({ user_id: user.id, chat_id: chatId, updated_at: new Date().toISOString() }, { onConflict: 'chat_id' });
+      .upsert(
+        {
+          user_id: telegramUserId,
+          chat_id: chatId,
+          auth_user_id: user.id,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      );
 
     return user.id;
   } catch (error) {
@@ -1388,12 +1396,16 @@ async function completeRegistration(chatId, telegramUserId, state) {
     // Связываем Telegram аккаунт
     const { error: mappingError } = await supabase
       .from('user_telegram_mapping')
-      .insert({
-        user_id: telegramUserId,
-        chat_id: chatId,
-        username: username,
-        auth_user_id: authUserId,
-      });
+      .upsert(
+        {
+          user_id: telegramUserId,
+          chat_id: chatId,
+          username: username,
+          auth_user_id: authUserId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' },
+      );
 
     if (mappingError) {
       console.error('Mapping error:', mappingError);
