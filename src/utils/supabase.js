@@ -138,10 +138,10 @@ export const authHelpers = {
       const { data: existing } = await supabase
         .from('user_telegram_mapping')
         .select('*')
-        .eq('user_id', telegramUser.id)
+        .eq('chat_id', telegramUser.id)
         .maybeSingle();
 
-      if (existing && existing.auth_user_id && existing.auth_user_id !== user.id) {
+      if (existing && existing.user_id && existing.user_id !== user.id) {
         throw new Error('Этот Telegram аккаунт уже привязан к другому пользователю');
       }
 
@@ -149,10 +149,9 @@ export const authHelpers = {
       const { data, error } = await supabase
         .from('user_telegram_mapping')
         .upsert({
-          user_id: telegramUser.id,
+          user_id: user.id,
           chat_id: telegramUser.id,
           username: telegramUser.username,
-          auth_user_id: user.id,
           updated_at: new Date().toISOString(),
         }, {
           onConflict: 'user_id',
@@ -177,14 +176,14 @@ export const authHelpers = {
     try {
       console.log('📱 Проверка привязки Telegram:', telegramUser.id);
 
-      // Ищем привязанный auth_user_id
+      // Ищем привязанный user_id (uuid из auth.users)
       const { data: mapping, error: mappingError } = await supabase
         .from('user_telegram_mapping')
-        .select('auth_user_id')
-        .eq('user_id', telegramUser.id)
+        .select('user_id')
+        .eq('chat_id', telegramUser.id)
         .maybeSingle();
 
-      if (mappingError || !mapping?.auth_user_id) {
+      if (mappingError || !mapping?.user_id) {
         console.log('⚠️ Telegram аккаунт не привязан');
         return { 
           linked: false,
@@ -192,10 +191,10 @@ export const authHelpers = {
         };
       }
 
-      console.log('✅ Telegram привязан к:', mapping.auth_user_id);
+      console.log('✅ Telegram привязан к:', mapping.user_id);
       return {
         linked: true,
-        authUserId: mapping.auth_user_id,
+        authUserId: mapping.user_id,
       };
     } catch (error) {
       console.error('❌ Ошибка проверки привязки:', error);

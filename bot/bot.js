@@ -32,7 +32,7 @@ function generateLockKey(notificationId, scheduledMinute) {
   return `${notificationId}_${scheduledMinute}`;
 }
 
-async function tryAcquireLock(notificationId, scheduledMinute) {
+async function tryAcquireLock(notificationId, scheduledMinute, userId) {
   const lockKey = generateLockKey(notificationId, scheduledMinute);
   
   if (processingLocks.has(lockKey)) {
@@ -48,6 +48,7 @@ async function tryAcquireLock(notificationId, scheduledMinute) {
       .insert({
         dedupe_key: lockKey,
         notification_id: notificationId,
+        user_id: userId,
         sent_at: new Date().toISOString()
       })
       .select()
@@ -93,15 +94,15 @@ async function isUserRegistered(telegramUserId) {
   try {
     const { data, error } = await supabase
       .from('user_telegram_mapping')
-      .select('auth_user_id')
-      .eq('user_id', telegramUserId)
+      .select('user_id')
+      .eq('chat_id', telegramUserId)
       .single();
 
-    if (error || !data?.auth_user_id) {
+    if (error || !data?.user_id) {
       return { registered: false, authUserId: null };
     }
 
-    return { registered: true, authUserId: data.auth_user_id };
+    return { registered: true, authUserId: data.user_id };
   } catch (error) {
     console.error('Error checking registration:', error);
     return { registered: false, authUserId: null };
@@ -198,7 +199,7 @@ async function startLinkFlow(chatId, telegramUserId, username) {
 
 async function sendNotificationSafe(chatId, notification, scheduledMinute, customMessage = null) {
   try {
-    const acquired = await tryAcquireLock(notification.id, scheduledMinute);
+    const acquired = await tryAcquireLock(notification.id, scheduledMinute, notification.user_id);
     
     if (!acquired) {
       console.log(`⏭️ Уведомление ${notification.id} уже отправляется/отправлено`);
@@ -446,11 +447,11 @@ ${notification.message ? `\n💬 ${notification.message}` : ''}
 async function resolveChatId(userId) {
   if (!supabase) return null;
 
-  // 1) Основной сценарий: auth_user_id -> chat_id
+  // 1) Основной сценарий: user_id (auth.users.id) -> chat_id
   const { data: directMapping } = await supabase
     .from('user_telegram_mapping')
     .select('chat_id')
-    .eq('auth_user_id', userId)
+    .eq('user_id', userId)
     .maybeSingle();
 
   if (directMapping?.chat_id) {
@@ -469,11 +470,11 @@ async function resolveChatId(userId) {
     return null;
   }
 
-  // 3) Legacy таблица: user_id хранит telegram id
+  // 3) Резервный сценарий: chat_id совпадает с telegram user id в личных чатах
   const { data: legacyMapping } = await supabase
     .from('user_telegram_mapping')
     .select('chat_id')
-    .eq('user_id', telegramId)
+    .eq('chat_id', telegramId)
     .maybeSingle();
 
   if (legacyMapping?.chat_id) {
@@ -621,12 +622,12 @@ async function resolveAppUserIdByChat(chatId, telegramUserId) {
 
   const { data: mapping } = await supabase
     .from('user_telegram_mapping')
-    .select('auth_user_id')
+    .select('user_id')
     .eq('chat_id', chatId)
     .maybeSingle();
 
-  if (mapping?.auth_user_id && isUuid(mapping.auth_user_id)) {
-    return mapping.auth_user_id;
+  if (mapping?.user_id && isUuid(mapping.user_id)) {
+    return mapping.user_id;
   }
 
   if (!telegramUserId) return null;
@@ -644,9 +645,8 @@ async function resolveAppUserIdByChat(chatId, telegramUserId) {
       .from('user_telegram_mapping')
       .upsert(
         {
-          user_id: telegramUserId,
+          user_id: user.id,
           chat_id: chatId,
-          auth_user_id: user.id,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' },
@@ -945,20 +945,17 @@ bot.onText(/\/start/, async (msg) => {
     return;
   }
 
-  // СУЩЕСТВУЮЩАЯ ЛОГИКА: Сохранение chat_id
+  // Обновляем chat_id для уже привязанных Telegram аккаунтов
   if (supabase) {
     try {
       await supabase
         .from('user_telegram_mapping')
-        .upsert(
-          { 
-            user_id: telegramUserId, 
-            chat_id: chatId, 
-            username: msg.from.username,
-            updated_at: new Date().toISOString()
-          },
-          { onConflict: 'user_id' }
-        );
+        .update({
+          chat_id: chatId,
+          username: msg.from.username,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('chat_id', telegramUserId);
       
       console.log(`💾 Сохранен chat_id ${chatId} для пользователя ${telegramUserId}`);
     } catch (err) {
@@ -1394,10 +1391,9 @@ async function completeRegistration(chatId, telegramUserId, state) {
       .from('user_telegram_mapping')
       .upsert(
         {
-          user_id: telegramUserId,
+          user_id: authUserId,
           chat_id: chatId,
           username: username,
-          auth_user_id: authUserId,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' },
@@ -1460,10 +1456,9 @@ async function completeLinkExistingAccount(chatId, telegramUserId, state) {
       .from('user_telegram_mapping')
       .upsert(
         {
-          user_id: telegramUserId,
+          user_id: authUserId,
           chat_id: chatId,
           username,
-          auth_user_id: authUserId,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'user_id' },
