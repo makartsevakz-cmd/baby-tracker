@@ -534,7 +534,7 @@ export const activityHelpers = {
       activityData.amount = activity.amount;
     } else if (activity.type === 'diaper') {
       activityData.diaper_type = activity.diaperType;
-    } else if (activity.type === 'medicine') {
+    } else if (activity.type === 'medicine' || activity.type === 'custom') {
       activityData.medicine_name = activity.medicineName;
     }
 
@@ -563,7 +563,7 @@ export const activityHelpers = {
       updateData.amount = activity.amount;
     } else if (activity.type === 'diaper') {
       updateData.diaper_type = activity.diaperType;
-    } else if (activity.type === 'medicine') {
+    } else if (activity.type === 'medicine' || activity.type === 'custom') {
       updateData.medicine_name = activity.medicineName;
     }
 
