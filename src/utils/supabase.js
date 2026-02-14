@@ -49,6 +49,30 @@ const isSessionMatchingTelegramUser = (user, telegramUser) => {
 };
 
 const normalizeEmail = (email) => String(email || '').trim().toLowerCase();
+const LAST_TELEGRAM_USER_ID_KEY = 'last_telegram_user_id';
+
+const readLastTelegramUserId = () => {
+  try {
+    return globalThis?.window?.localStorage?.getItem(LAST_TELEGRAM_USER_ID_KEY) || '';
+  } catch (error) {
+    console.warn('Failed to read last Telegram user id from localStorage:', error);
+    return '';
+  }
+};
+
+const persistLastTelegramUserId = (telegramUserId) => {
+  try {
+    if (!globalThis?.window?.localStorage) return;
+
+    if (telegramUserId) {
+      globalThis.window.localStorage.setItem(LAST_TELEGRAM_USER_ID_KEY, telegramUserId);
+    } else {
+      globalThis.window.localStorage.removeItem(LAST_TELEGRAM_USER_ID_KEY);
+    }
+  } catch (error) {
+    console.warn('Failed to persist last Telegram user id to localStorage:', error);
+  }
+};
 
 // ========================================
 // AUTH HELPERS - ОБНОВЛЁННАЯ ВЕРСИЯ
@@ -313,10 +337,26 @@ export const authHelpers = {
     console.log('🔄 Инициализация сессии:', { telegramUser: !!telegramUser, platform });
 
     // Проверяем существующую сессию
-    const existingUser = await this.getCurrentUser();
+    let existingUser = await this.getCurrentUser();
 
     // Если есть Telegram данные
     if (telegramUser) {
+      const telegramUserId = getTelegramUserId(telegramUser);
+      const shouldValidateCachedUserId = platform !== 'android';
+
+      if (shouldValidateCachedUserId && telegramUserId) {
+        const cachedTelegramUserId = readLastTelegramUserId();
+        if (cachedTelegramUserId && cachedTelegramUserId !== telegramUserId) {
+          console.log('🔄 Обнаружена смена Telegram-аккаунта, сбрасываем предыдущую сессию', {
+            cachedTelegramUserId,
+            telegramUserId,
+          });
+
+          await this.signOut();
+          existingUser = null;
+        }
+      }
+
       // В Telegram всегда используем бесшовный вход/регистрацию по telegram_id.
       if (existingUser && isSessionMatchingTelegramUser(existingUser, telegramUser)) {
         await this._ensureUserProfile(
@@ -325,6 +365,9 @@ export const authHelpers = {
           telegramUser.first_name || telegramUser.username || ''
         );
         await this.linkTelegramAccount(telegramUser);
+        if (shouldValidateCachedUserId && telegramUserId) {
+          persistLastTelegramUserId(telegramUserId);
+        }
         return { user: existingUser, mode: 'session', error: null };
       }
 
@@ -345,6 +388,9 @@ export const authHelpers = {
         telegramUser.first_name || telegramUser.username || ''
       );
       await this.linkTelegramAccount(telegramUser);
+      if (shouldValidateCachedUserId && telegramUserId) {
+        persistLastTelegramUserId(telegramUserId);
+      }
 
       return { user: telegramAuthData.user, mode: 'session', error: null };
     }
