@@ -49,7 +49,7 @@ const ActivityTracker = () => {
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [historyTab, setHistoryTab] = useState('list');
   const [historyVisibleDayCount, setHistoryVisibleDayCount] = useState(7);
-  const [historyFilterType, setHistoryFilterType] = useState('all');
+  const [historyFilterTypes, setHistoryFilterTypes] = useState([]);
   const [historyFilterStartDate, setHistoryFilterStartDate] = useState('');
   const [historyFilterEndDate, setHistoryFilterEndDate] = useState('');
   const [selectedStatsActivityType, setSelectedStatsActivityType] = useState(null);
@@ -91,6 +91,7 @@ const ActivityTracker = () => {
     bath: { icon: Bath, label: 'Купание', color: 'bg-cyan-100 text-cyan-600' },
     walk: { icon: Wind, label: 'Прогулка', color: 'bg-green-100 text-green-600' },
     activity: { icon: Activity, label: 'Активность', color: 'bg-orange-100 text-orange-600' },
+    custom: { icon: Edit2, label: 'Свое событие', color: 'bg-violet-100 text-violet-700' },
     burp: { icon: Undo2, label: 'Отрыжка', color: 'bg-lime-100 text-lime-700' },
     diaper: { icon: Droplets, label: 'Подгузник', color: 'bg-yellow-100 text-yellow-600' },
     medicine: { icon: Pill, label: 'Лекарство', color: 'bg-red-100 text-red-600' },
@@ -616,7 +617,7 @@ const ActivityTracker = () => {
     return recentCompletedActivities.filter((activity) => {
       if (!activity.startTime) return false;
 
-      if (historyFilterType !== 'all' && activity.type !== historyFilterType) {
+      if (historyFilterTypes.length > 0 && !historyFilterTypes.includes(activity.type)) {
         return false;
       }
 
@@ -633,7 +634,7 @@ const ActivityTracker = () => {
 
       return true;
     });
-  }, [recentCompletedActivities, historyFilterType, historyFilterStartDate, historyFilterEndDate]);
+  }, [recentCompletedActivities, historyFilterTypes, historyFilterStartDate, historyFilterEndDate]);
 
   const historyDayGroups = useMemo(() => {
     const groups = new Map();
@@ -690,7 +691,7 @@ const ActivityTracker = () => {
 
   useEffect(() => {
     setHistoryVisibleDayCount(7);
-  }, [activities.length, historyFilterType, historyFilterStartDate, historyFilterEndDate]);
+  }, [activities.length, historyFilterTypes, historyFilterStartDate, historyFilterEndDate]);
 
   useEffect(() => {
     if (view !== 'history' || historyTab !== 'list') return;
@@ -711,6 +712,12 @@ const ActivityTracker = () => {
   }, [view, historyTab, historyVisibleDayCount, historyDayGroups.length, loadMoreHistoryDays]);
 
   const handleBack = useCallback(() => {
+    if (view === 'history-filters') {
+      if (tg) tg.HapticFeedback?.impactOccurred('light');
+      setView('history');
+      return;
+    }
+
     if (view !== 'main') {
       if (tg) tg.HapticFeedback?.impactOccurred('light');
       setView('main');
@@ -929,7 +936,7 @@ const ActivityTracker = () => {
       return;
     }
 
-    if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') && formData.endTime) {
+    if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity' || formData.type === 'custom') && formData.endTime) {
       if (new Date(formData.endTime) <= new Date(formData.startTime)) {
         if (tg) tg.HapticFeedback?.notificationOccurred('error');
         alert('Время окончания должно быть позже времени начала');
@@ -941,6 +948,13 @@ const ActivityTracker = () => {
     if (formData.type === 'burp' && (!formData.burpColor || !formData.burpConsistency || !formData.burpVolume)) {
       if (tg) tg.HapticFeedback?.notificationOccurred('error');
       alert('Заполните цвет, консистенцию и объём отрыжки');
+      setIsSaving(false);
+      return;
+    }
+
+    if (formData.type === 'custom' && !String(formData.medicineName || '').trim()) {
+      if (tg) tg.HapticFeedback?.notificationOccurred('error');
+      alert('Для "Своего события" укажите название');
       setIsSaving(false);
       return;
     }
@@ -988,6 +1002,13 @@ const ActivityTracker = () => {
       } else {
         // For manual historical records without end time,
         // keep chronology based on the selected start time.
+        activityData.endTime = activityData.startTime;
+      }
+    } else if (formData.type === 'custom') {
+      activityData.medicineName = String(formData.medicineName || '').trim();
+      if (formData.endTime) {
+        activityData.endTime = formData.endTime;
+      } else {
         activityData.endTime = activityData.startTime;
       }
     } else if (formData.type === 'burp') {
@@ -1340,6 +1361,8 @@ const ActivityTracker = () => {
       });
     } else if (type === 'medicine') {
       setFormData({ ...baseData, medicineName: '' });
+    } else if (type === 'custom') {
+      setFormData({ ...baseData, endTime: '', medicineName: '', comment: '' });
     } else {
       setFormData(
         (type === 'sleep' || type === 'walk' || type === 'activity')
@@ -2380,9 +2403,42 @@ const ActivityTracker = () => {
                 </div>
               )}
 
+              {selectedActivity === 'custom' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block mb-2 font-medium">Название события*:</label>
+                    <input
+                      type="text"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={formData.medicineName || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, medicineName: e.target.value }))}
+                      placeholder="Например: Массаж"
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Время начала*:</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                  <div>
+                    <label className="block mb-2 font-medium">Время окончания (опционально):</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.endTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, endTime: fromLocalDateTimeString(e.target.value) }))}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div>
-                <label className="block mb-2 font-medium">Комментарий:</label>
-                <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder="Добавьте заметку..." />
+                <label className="block mb-2 font-medium">{selectedActivity === 'custom' ? 'Комментарий (опционально):' : 'Комментарий:'}</label>
+                <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder={selectedActivity === 'custom' ? 'Дополнительные детали...' : 'Добавьте заметку...'} />
               </div>
             </div>
           </div>
@@ -2753,6 +2809,81 @@ const ActivityTracker = () => {
     );
   }
 
+
+  if (view === 'history-filters') {
+    return (
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+          <div className="max-w-2xl mx-auto p-4 space-y-4">
+            <div className="bg-white rounded-2xl shadow-lg p-4 flex items-center justify-between">
+              <button onClick={handleBack} className="p-2 rounded-lg bg-gray-100 text-gray-700" title="Назад">
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <h2 className="text-xl font-semibold">Фильтры истории</h2>
+              <div className="w-9" />
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-4 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Дата от</label>
+                  <input
+                    type="date"
+                    value={historyFilterStartDate}
+                    onChange={(e) => setHistoryFilterStartDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-500 mb-1">Дата до</label>
+                  <input
+                    type="date"
+                    value={historyFilterEndDate}
+                    onChange={(e) => setHistoryFilterEndDate(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-2">Активности</label>
+                <div className="space-y-2">
+                  {Object.entries(activityTypes).map(([key, type]) => {
+                    const checked = historyFilterTypes.includes(key);
+                    return (
+                      <label key={key} className="flex items-center justify-between border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                        <span>{type.label}</span>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => setHistoryFilterTypes((prev) => checked ? prev.filter((item) => item !== key) : [...prev, key])}
+                          className="w-4 h-4"
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  setHistoryFilterStartDate('');
+                  setHistoryFilterEndDate('');
+                  setHistoryFilterTypes([]);
+                }}
+                className="w-full py-2 rounded-lg border border-gray-300 text-gray-700 font-medium"
+              >
+                Сбросить фильтры
+              </button>
+            </div>
+          </div>
+        </div>
+        {renderBottomNavigation()}
+      </>
+    );
+  }
+
+
   if (view === 'history') {
     const weekStart = getWeekStart(selectedWeekOffset);
     const weekDays = Array.from({ length: 7 }, (_, i) => {
@@ -2768,6 +2899,7 @@ const ActivityTracker = () => {
       bath: '#06b6d4',
       walk: '#22c55e',
       activity: '#f97316',
+      custom: '#8b5cf6',
       burp: '#84cc16',
       diaper: '#eab308',
       medicine: '#ef4444',
@@ -2850,40 +2982,21 @@ const ActivityTracker = () => {
 
             {historyTab === 'list' ? (
               <div className="space-y-4">
-                <div className="bg-white rounded-2xl shadow-lg p-4 space-y-3">
-                  <h3 className="text-sm font-semibold text-gray-700">Фильтры</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Дата от</label>
-                      <input
-                        type="date"
-                        value={historyFilterStartDate}
-                        onChange={(e) => setHistoryFilterStartDate(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-500 mb-1">Дата до</label>
-                      <input
-                        type="date"
-                        value={historyFilterEndDate}
-                        onChange={(e) => setHistoryFilterEndDate(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-                      />
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-500 mb-1">Активность</label>
-                    <select
-                      value={historyFilterType}
-                      onChange={(e) => setHistoryFilterType(e.target.value)}
-                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
-                    >
-                      <option value="all">Все активности</option>
-                      {Object.entries(activityTypes).map(([key, type]) => (
-                        <option key={key} value={key}>{type.label}</option>
-                      ))}
-                    </select>
+                <div className="bg-white rounded-2xl shadow-lg p-4">
+                  <button
+                    onClick={() => setView('history-filters')}
+                    className="w-full border border-gray-200 rounded-xl px-3 py-3 flex items-center justify-between text-sm font-medium"
+                  >
+                    <span>
+                      Фильтры
+                      {historyFilterTypes.length > 0 && ` · ${historyFilterTypes.length}`}
+                    </span>
+                    <ChevronRight className="w-4 h-4 text-gray-400" />
+                  </button>
+                  <div className="mt-2 text-xs text-gray-500">
+                    {historyFilterStartDate || historyFilterEndDate || historyFilterTypes.length > 0
+                      ? `Диапазон: ${historyFilterStartDate || '...'} — ${historyFilterEndDate || '...'}, типов: ${historyFilterTypes.length || 'все'}`
+                      : 'Без фильтров'}
                   </div>
                 </div>
 
