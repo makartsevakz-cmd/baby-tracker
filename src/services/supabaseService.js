@@ -115,19 +115,9 @@ class SupabaseService {
    * Инвалидация всего кеша таблицы
    */
   async _invalidateTableCache(table) {
-    const keys = await cacheService._getAllKeys();
-    
-    const tableKeys = keys.filter(k => 
-      k.startsWith(`cache_${table}_`)
-    );
-
-    await Promise.all(
-      tableKeys.map(key => 
-        cacheService.remove(key.replace('cache_', ''))
-      )
-    );
-
-    console.log(`🗑️ Invalidated ${tableKeys.length} cache entries for table: ${table}`);
+    // Используем оптимизированный метод clearByPrefix
+    const count = await cacheService.clearByPrefix(table);
+    console.log(`🗑️ Invalidated ${count} cache entries for table: ${table}`);
   }
 }
 

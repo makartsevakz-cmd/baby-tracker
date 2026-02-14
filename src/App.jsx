@@ -2,10 +2,24 @@ import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspens
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
+import supabaseService from './services/supabaseService.js';
 import notificationService from './services/notificationService.js';
 import { Platform } from './utils/platform.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
+
+// Debounce helper для throttling
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
 
 const buildUserNamespace = (user, telegramUser) => {
   if (user?.id) {
@@ -377,13 +391,50 @@ const ActivityTracker = () => {
 
           let initialData = null;
           try {
-            initialData = supabaseModule.appDataHelpers
-              ? await supabaseModule.appDataHelpers.getInitialData()
-              : {
-                  profile: await supabaseModule.babyHelpers.getProfile(),
-                  activities: await supabaseModule.activityHelpers.getActivities(),
-                  growth: await supabaseModule.growthHelpers.getRecords(),
-                };
+            // Получаем baby_id для фильтрации
+            const currentUser = await supabaseModule.authHelpers.getCurrentUser();
+            const { data: babyData } = await supabaseModule.supabase
+              .from('babies')
+              .select('id')
+              .eq('user_id', currentUser.id)
+              .single();
+            
+            const babyId = babyData?.id;
+
+            if (babyId) {
+              // Загружаем данные с кешированием
+              const [profileResult, activitiesResult, growthResult] = await Promise.all([
+                supabaseService.getWithCache('babies', { 
+                  eq: { user_id: currentUser.id } 
+                }, 3600), // TTL 1 час для профиля
+                
+                supabaseService.getWithCache('activities', { 
+                  eq: { baby_id: babyId },
+                  order: { column: 'start_time', ascending: false },
+                  limit: 100 // Ограничиваем последними 100 активностями
+                }, 1800), // TTL 30 минут для активностей
+                
+                supabaseService.getWithCache('growth_records', { 
+                  eq: { baby_id: babyId },
+                  order: { column: 'measurement_date', ascending: false }
+                }, 3600) // TTL 1 час для роста
+              ]);
+
+              initialData = {
+                profile: { data: profileResult.data?.[0] || null },
+                activities: { data: activitiesResult.data || [] },
+                growth: { data: growthResult.data || [] }
+              };
+            } else {
+              // Fallback если baby не найден
+              initialData = supabaseModule.appDataHelpers
+                ? await supabaseModule.appDataHelpers.getInitialData()
+                : {
+                    profile: await supabaseModule.babyHelpers.getProfile(),
+                    activities: await supabaseModule.activityHelpers.getActivities(),
+                    growth: await supabaseModule.growthHelpers.getRecords(),
+                  };
+            }
 
             if (initialData.profile?.data) {
               const profile = {
@@ -715,11 +766,23 @@ const ActivityTracker = () => {
         if (editingId) {
           const { data, error } = await supabaseModule.activityHelpers.updateActivity(editingId, supabaseData);
           if (error) throw error;
-          setActivities(prev => prev.map(a => a.id === editingId ? convertFromSupabaseActivity(data) : a));
+          
+          const updatedActivity = convertFromSupabaseActivity(data);
+          setActivities(prev => prev.map(a => a.id === editingId ? updatedActivity : a));
+          
+          // Обновляем кеш
+          const updatedActivities = activities.map(a => a.id === editingId ? updatedActivity : a);
+          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
         } else {
           const { data, error } = await supabaseModule.activityHelpers.createActivity(supabaseData);
           if (error) throw error;
-          setActivities(prev => [convertFromSupabaseActivity(data), ...prev]);
+          
+          const newActivity = convertFromSupabaseActivity(data);
+          setActivities(prev => [newActivity, ...prev]);
+          
+          // Обновляем кеш для offline-режима
+          const updatedActivities = [newActivity, ...activities];
+          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
         }
       } else {
         // Fallback to cache
@@ -755,6 +818,10 @@ const ActivityTracker = () => {
         if (isAuthenticated) {
           const { error } = await supabaseModule.activityHelpers.deleteActivity(id);
           if (error) throw error;
+          
+          // Обновляем кеш после удаления
+          const updatedActivities = activities.filter(a => a.id !== id);
+          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
         } else {
           await cacheService.set('baby_activities', activities.filter(a => a.id !== id), CACHE_TTL_SECONDS);
         }
@@ -841,6 +908,18 @@ const ActivityTracker = () => {
     return stats;
   };
 
+  // Throttled cache save для таймеров - сохраняем раз в 10 секунд вместо каждую секунду
+  const saveTimersToCache = useCallback(
+    debounce((timersData, pausedData, metaData) => {
+      Promise.all([
+        cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
+        cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
+        cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
+      ]);
+    }, 10000), // Сохраняем раз в 10 секунд
+    []
+  );
+
   useEffect(() => {
     if (window.Telegram?.WebApp) {
       const telegram = window.Telegram.WebApp;
@@ -872,14 +951,22 @@ const ActivityTracker = () => {
 
   useEffect(() => {
     if (!isLoading) {
-      // Save timers to cache with 1-hour TTL
-      void Promise.all([
+      // Throttled save - раз в 10 секунд вместо каждую секунду
+      saveTimersToCache(timers, pausedTimers, timerMeta);
+    }
+  }, [timers, pausedTimers, timerMeta, isLoading, saveTimersToCache]);
+
+  // Сохраняем при размонтировании компонента (важно!)
+  useEffect(() => {
+    return () => {
+      // Force save on unmount
+      Promise.all([
         cacheService.set('active_timers', timers, CACHE_TTL_SECONDS),
         cacheService.set('paused_timers', pausedTimers, CACHE_TTL_SECONDS),
         cacheService.set('timer_meta', timerMeta, CACHE_TTL_SECONDS),
       ]);
-    }
-  }, [timers, pausedTimers, timerMeta, isLoading]);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);

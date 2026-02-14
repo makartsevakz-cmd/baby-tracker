@@ -181,6 +181,34 @@ class CacheService {
   }
 
   /**
+   * Очистить кеш по префиксу (например, все activities)
+   */
+  async clearByPrefix(prefix) {
+    await this._ensureReady();
+
+    try {
+      const fullPrefix = this._buildDataKey(prefix);
+      const metaFullPrefix = this._buildMetaKey(prefix);
+      const keys = await this._getAllKeys();
+
+      const keysToRemove = keys.filter(k =>
+        k.startsWith(fullPrefix) || k.startsWith(metaFullPrefix)
+      );
+
+      // Batch removal
+      await Promise.all(
+        keysToRemove.map(key => this._removeItem(key))
+      );
+
+      console.log(`🗑️ Cleared ${keysToRemove.length} entries with prefix: ${prefix}`);
+      return keysToRemove.length;
+    } catch (error) {
+      console.error('Cache clearByPrefix error:', error);
+      return 0;
+    }
+  }
+
+  /**
    * Получить статистику кеша
    */
   async getStats() {
