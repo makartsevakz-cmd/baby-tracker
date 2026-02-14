@@ -3,6 +3,7 @@ import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Pla
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import notificationService from './services/notificationService.js';
+import { Platform } from './utils/platform.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
 
@@ -287,7 +288,10 @@ const ActivityTracker = () => {
         cacheService.setNamespace(buildUserNamespace(null, telegramUser));
 
         try {
-          const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({ telegramUser });
+          const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({
+            telegramUser,
+            platform: Platform.getCurrentPlatform(),
+          });
 
           // НОВАЯ ЛОГИКА: Проверка на необходимость авторизации
           if (mode === 'needs_registration') {
