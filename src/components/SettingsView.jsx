@@ -21,6 +21,7 @@ const systemNotificationDefinitions = [
 
 const SettingsView = ({
   tg,
+  isTelegramApp = false,
   onBack,
   userEmail,
   settings,
@@ -156,8 +157,9 @@ const SettingsView = ({
           </form>
         </section>
 
-        <section className={sectionCardClass}>
-          <h3 className="text-lg font-semibold">Внешний вид</h3>
+        {!isTelegramApp && (
+          <section className={sectionCardClass}>
+            <h3 className="text-lg font-semibold">Внешний вид</h3>
 
           <div>
             <div className="text-sm text-gray-500 mb-2">Язык приложения</div>
@@ -201,7 +203,8 @@ const SettingsView = ({
               })}
             </div>
           </div>
-        </section>
+          </section>
+        )}
 
         <section className={sectionCardClass}>
           <h3 className="text-lg font-semibold">Уведомления</h3>
@@ -240,16 +243,18 @@ const SettingsView = ({
           </button>
         </section>
 
-        <section className={sectionCardClass}>
-          <h3 className="text-lg font-semibold">Система</h3>
-          <button
-            onClick={onLogout}
-            className="w-full rounded-lg border border-red-200 text-red-700 bg-red-50 py-2.5 font-medium flex items-center justify-center gap-2"
-          >
-            <LogOut className="w-4 h-4" />
-            Выйти из профиля
-          </button>
-        </section>
+        {!isTelegramApp && (
+          <section className={sectionCardClass}>
+            <h3 className="text-lg font-semibold">Система</h3>
+            <button
+              onClick={onLogout}
+              className="w-full rounded-lg border border-red-200 text-red-700 bg-red-50 py-2.5 font-medium flex items-center justify-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
+              Выйти из профиля
+            </button>
+          </section>
+        )}
       </div>
     </div>
   );
