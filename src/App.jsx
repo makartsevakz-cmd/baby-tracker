@@ -6,6 +6,7 @@ import supabaseService from './services/supabaseService.js';
 import notificationService from './services/notificationService.js';
 import userSettingsService, { DEFAULT_USER_SETTINGS } from './services/userSettingsService.js';
 import { Platform } from './utils/platform.js';
+import StatsActivityDetail from './components/stats/StatsActivityDetail.jsx';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
 const SettingsView = lazy(() => import('./components/SettingsView.jsx'));
 const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
@@ -3222,7 +3223,6 @@ const ActivityTracker = () => {
 
   if (view === 'stats-activity-detail') {
     const activityMeta = selectedStatsActivityType ? activityTypes[selectedStatsActivityType] : null;
-    const ActivityIcon = activityMeta?.icon;
 
     return (
       <>
@@ -3242,10 +3242,10 @@ const ActivityTracker = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-lg p-8 text-center text-gray-500">
-              {ActivityIcon && <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-gray-400" />}
-              Экран в разработке
-            </div>
+            <StatsActivityDetail
+              selectedType={selectedStatsActivityType}
+              activities={activities}
+            />
           </div>
         </div>
         {renderBottomNavigation()}
