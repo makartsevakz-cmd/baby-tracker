@@ -14,10 +14,25 @@ class CacheService {
     this.namespace = 'global';
     this.isReady = false;
     this.memoryStore = new Map();
+    this.hasLocalStorage = false;
     this.initPromise = this._init();
   }
 
   async _init() {
+    if (this.platform !== 'android') {
+      try {
+        const storage = globalThis?.window?.localStorage;
+        if (storage) {
+          const probeKey = '__cache_service_probe__';
+          storage.setItem(probeKey, '1');
+          storage.removeItem(probeKey);
+          this.hasLocalStorage = true;
+        }
+      } catch (error) {
+        console.warn('localStorage is unavailable, fallback to in-memory cache', error);
+      }
+    }
+
     if (this.platform === 'android') {
       const preferencesPlugin = globalThis?.window?.Capacitor?.Plugins?.Preferences;
       if (preferencesPlugin) {
@@ -258,12 +273,21 @@ class CacheService {
       return value;
     }
 
+    if (this.hasLocalStorage) {
+      return window.localStorage.getItem(key);
+    }
+
     return this.memoryStore.has(key) ? this.memoryStore.get(key) : null;
   }
 
   async _setItem(key, value) {
     if (this.platform === 'android' && this.Preferences) {
       await this.Preferences.set({ key, value });
+      return;
+    }
+
+    if (this.hasLocalStorage) {
+      window.localStorage.setItem(key, value);
       return;
     }
 
@@ -276,6 +300,11 @@ class CacheService {
       return;
     }
 
+    if (this.hasLocalStorage) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+
     this.memoryStore.delete(key);
   }
 
@@ -283,6 +312,10 @@ class CacheService {
     if (this.platform === 'android' && this.Preferences) {
       const { keys } = await this.Preferences.keys();
       return keys;
+    }
+
+    if (this.hasLocalStorage) {
+      return Object.keys(window.localStorage);
     }
 
     return Array.from(this.memoryStore.keys());
