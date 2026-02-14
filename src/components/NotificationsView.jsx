@@ -31,6 +31,7 @@ const NotificationsView = ({
   const isAndroid = Platform.isAndroid();
 
   const [notifications, setNotifications] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
@@ -47,24 +48,32 @@ const NotificationsView = ({
   ];
 
   const loadNotifications = async () => {
-    if (isAuthenticated && notificationHelpers) {
-      const { data, error } = await notificationHelpers.getNotifications();
-      if (data) {
-        setNotifications(data);
+    setIsLoading(true);
+    
+    try {
+      if (isAuthenticated && notificationHelpers) {
+        const { data, error } = await notificationHelpers.getNotifications();
+        if (data) {
+          setNotifications(data);
+          // Сохраняем в кеш для offline режима
+          await cacheService.set('notifications', data, CACHE_TTL_SECONDS);
+        } else {
+          console.error('Load notifications error:', error);
+        }
       } else {
-        console.error('Load notifications error:', error);
+        const saved = await cacheService.get('notifications');
+        if (saved) {
+          setNotifications(saved);
+        }
       }
-    } else {
-      const saved = await cacheService.get('notifications');
-      if (saved) {
-        setNotifications(saved);
-      }
+    } finally {
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
     loadNotifications();
-  }, [isAuthenticated]);
+  }, [isAuthenticated, notificationHelpers]);
 
   // ── Конвертация локальное ↔ UTC ──────────────────────────────────────────
   const localTimeToUTC = (localHHMM) => {
@@ -521,7 +530,12 @@ const NotificationsView = ({
             Активные уведомления ({notifications.filter(n => n.enabled).length})
           </h3>
           
-          {notifications.length > 0 ? (
+          {isLoading ? (
+            <div className="text-center py-8">
+              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-purple-600 mx-auto mb-4"></div>
+              <p className="text-gray-600">Загрузка уведомлений...</p>
+            </div>
+          ) : notifications.length > 0 ? (
             <div className="space-y-3">
               {notifications.map(notification => {
                 const ActivityIcon = activityTypes[notification.activity_type || notification.activityType]?.icon;
