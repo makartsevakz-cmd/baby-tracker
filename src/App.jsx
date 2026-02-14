@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home, History, ChevronRight } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import supabaseService from './services/supabaseService.js';
@@ -45,6 +45,9 @@ const ActivityTracker = () => {
   const [tg, setTg] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
+  const [historyTab, setHistoryTab] = useState('list');
+  const [historyVisibleDayCount, setHistoryVisibleDayCount] = useState(7);
+  const [selectedStatsActivityType, setSelectedStatsActivityType] = useState(null);
   const [babyProfile, setBabyProfile] = useState({
     name: '',
     birthDate: '',
@@ -64,6 +67,7 @@ const ActivityTracker = () => {
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
   const [isOnboardingStatusResolved, setIsOnboardingStatusResolved] = useState(false);
   const activeNamespaceRef = useRef('global');
+  const historyLoadTriggerRef = useRef(null);
   // НОВЫЕ СОСТОЯНИЯ ДЛЯ АВТОРИЗАЦИИ
   const [needsAuth, setNeedsAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' или 'register'
@@ -587,9 +591,80 @@ const ActivityTracker = () => {
     return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
   }, [activitiesByChronology]);
 
+  const historyDayGroups = useMemo(() => {
+    const groups = new Map();
+
+    recentCompletedActivities.forEach((activity) => {
+      if (!activity.startTime) return;
+      const date = new Date(activity.startTime);
+      if (Number.isNaN(date.getTime())) return;
+
+      const dateKey = date.toISOString().slice(0, 10);
+      if (!groups.has(dateKey)) {
+        groups.set(dateKey, {
+          dateKey,
+          date,
+          activities: [],
+        });
+      }
+
+      groups.get(dateKey).activities.push(activity);
+    });
+
+    return Array.from(groups.values())
+      .sort((a, b) => b.date.getTime() - a.date.getTime())
+      .map((group) => ({
+        ...group,
+        activities: [...group.activities].sort((a, b) => getActivityChronologyTime(b) - getActivityChronologyTime(a)),
+      }));
+  }, [recentCompletedActivities, getActivityChronologyTime]);
+
+  const visibleHistoryDayGroups = useMemo(() => {
+    return historyDayGroups.slice(0, historyVisibleDayCount);
+  }, [historyDayGroups, historyVisibleDayCount]);
+
   const hasBabyProfile = useMemo(() => {
     return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
   }, [babyProfile]);
+
+  const getWeekStart = useCallback((offset = 0) => {
+    const now = new Date();
+    const dayOfWeek = now.getDay();
+    const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diff + (offset * 7));
+    monday.setHours(0, 0, 0, 0);
+    return monday;
+  }, []);
+
+  const loadMoreHistoryDays = useCallback(() => {
+    setHistoryVisibleDayCount((prev) => {
+      if (prev >= historyDayGroups.length) return prev;
+      return Math.min(prev + 7, historyDayGroups.length);
+    });
+  }, [historyDayGroups.length]);
+
+  useEffect(() => {
+    setHistoryVisibleDayCount(7);
+  }, [activities.length]);
+
+  useEffect(() => {
+    if (view !== 'history' || historyTab !== 'list') return;
+    const target = historyLoadTriggerRef.current;
+    if (!target || historyVisibleDayCount >= historyDayGroups.length) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          loadMoreHistoryDays();
+        }
+      },
+      { root: null, rootMargin: '180px 0px' }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [view, historyTab, historyVisibleDayCount, historyDayGroups.length, loadMoreHistoryDays]);
 
   const handleBack = useCallback(() => {
     if (view !== 'main') {
@@ -615,7 +690,7 @@ const ActivityTracker = () => {
   const renderBottomNavigation = () => (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-purple-100 bg-white/95 backdrop-blur-sm">
       <div className="max-w-2xl mx-auto px-4 py-2">
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-4 gap-2">
           <button
             onClick={() => navigateTo('main')}
             className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
@@ -626,6 +701,24 @@ const ActivityTracker = () => {
             Главная
           </button>
           <button
+            onClick={() => navigateTo('history')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'history' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <History className="w-5 h-5 mb-1" />
+            История
+          </button>
+          <button
+            onClick={() => navigateTo('stats')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'stats' || view === 'stats-activity-detail' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <BarChart3 className="w-5 h-5 mb-1" />
+            Статистика
+          </button>
+          <button
             onClick={() => navigateTo('notifications')}
             className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
               view === 'notifications' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
@@ -633,15 +726,6 @@ const ActivityTracker = () => {
           >
             <Bell className="w-5 h-5 mb-1" />
             Уведомления
-          </button>
-          <button
-            onClick={() => navigateTo('stats')}
-            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
-              view === 'stats' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
-            }`}
-          >
-            <BarChart3 className="w-5 h-5 mb-1" />
-            Статистика
           </button>
         </div>
       </div>
@@ -2455,40 +2539,13 @@ const ActivityTracker = () => {
     );
   }
 
-  if (view === 'stats') {
-    // Get start of current week (Monday)
-    const getWeekStart = (offset = 0) => {
-      const now = new Date();
-      const dayOfWeek = now.getDay();
-      const diff = dayOfWeek === 0 ? -6 : 1 - dayOfWeek; // Monday as first day
-      const monday = new Date(now);
-      monday.setDate(now.getDate() + diff + (offset * 7));
-      monday.setHours(0, 0, 0, 0);
-      return monday;
-    };
-
+  if (view === 'history') {
     const weekStart = getWeekStart(selectedWeekOffset);
     const weekDays = Array.from({ length: 7 }, (_, i) => {
       const day = new Date(weekStart);
       day.setDate(weekStart.getDate() + i);
       return day;
     });
-
-    const getIndicatorColorClass = (type) => {
-      const colorClass = activityTypes[type]?.color || '';
-
-      if (colorClass.includes('pink')) return 'bg-pink-400';
-      if (colorClass.includes('blue')) return 'bg-blue-400';
-      if (colorClass.includes('indigo')) return 'bg-indigo-400';
-      if (colorClass.includes('cyan')) return 'bg-cyan-400';
-      if (colorClass.includes('green')) return 'bg-green-400';
-      if (colorClass.includes('yellow')) return 'bg-yellow-400';
-      if (colorClass.includes('orange')) return 'bg-orange-400';
-      if (colorClass.includes('lime')) return 'bg-lime-400';
-      if (colorClass.includes('red')) return 'bg-red-400';
-
-      return 'bg-gray-400';
-    };
 
     const indicatorColors = {
       breastfeeding: '#ec4899',
@@ -2502,16 +2559,28 @@ const ActivityTracker = () => {
       medicine: '#ef4444',
     };
 
+    const getIndicatorColorClass = (type) => {
+      const colorClass = activityTypes[type]?.color || '';
+      if (colorClass.includes('pink')) return 'bg-pink-400';
+      if (colorClass.includes('blue')) return 'bg-blue-400';
+      if (colorClass.includes('indigo')) return 'bg-indigo-400';
+      if (colorClass.includes('cyan')) return 'bg-cyan-400';
+      if (colorClass.includes('green')) return 'bg-green-400';
+      if (colorClass.includes('yellow')) return 'bg-yellow-400';
+      if (colorClass.includes('orange')) return 'bg-orange-400';
+      if (colorClass.includes('lime')) return 'bg-lime-400';
+      if (colorClass.includes('red')) return 'bg-red-400';
+      return 'bg-gray-400';
+    };
+
     const getCellSummary = (day, hour) => {
       const hourStart = new Date(day);
       hourStart.setHours(hour, 0, 0, 0);
       const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
-
       const minutesByType = {};
 
       activities.forEach((activity) => {
         if (!activity.startTime) return;
-
         const startTime = new Date(activity.startTime);
         const fallbackEnd = new Date(startTime.getTime() + 10 * 60 * 1000);
         const rawEndTime = activity.endTime ? new Date(activity.endTime) : fallbackEnd;
@@ -2522,12 +2591,10 @@ const ActivityTracker = () => {
         const segmentStart = startTime < hourStart ? hourStart : startTime;
         const segmentEnd = endTime > hourEnd ? hourEnd : endTime;
         const durationMinutes = Math.max(0, (segmentEnd - segmentStart) / 60000);
-
         minutesByType[activity.type] = (minutesByType[activity.type] || 0) + durationMinutes;
       });
 
-      const dominantType = Object.entries(minutesByType)
-        .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+      const dominantType = Object.entries(minutesByType).sort((a, b) => b[1] - a[1])[0]?.[0] || null;
       const totalMinutes = Math.min(60, Object.values(minutesByType).reduce((sum, minutes) => sum + minutes, 0));
 
       return {
@@ -2542,7 +2609,185 @@ const ActivityTracker = () => {
       return `${weekStart.getDate()} ${weekStart.toLocaleDateString('ru-RU', { month: 'short' })} - ${weekEnd.getDate()} ${weekEnd.toLocaleDateString('ru-RU', { month: 'short', year: 'numeric' })}`;
     };
 
-    // Get summary statistics for the week
+    return (
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+          <div className="max-w-2xl mx-auto p-4">
+            <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
+              <h2 className="text-xl font-semibold">История</h2>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-2 mb-4">
+              <div className="grid grid-cols-2 gap-2 bg-gray-100 rounded-xl p-1">
+                <button
+                  onClick={() => setHistoryTab('list')}
+                  className={`rounded-lg py-2 text-sm font-medium transition-colors ${historyTab === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                >
+                  Список
+                </button>
+                <button
+                  onClick={() => setHistoryTab('table')}
+                  className={`rounded-lg py-2 text-sm font-medium transition-colors ${historyTab === 'table' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500'}`}
+                >
+                  Таблица
+                </button>
+              </div>
+            </div>
+
+            {historyTab === 'list' ? (
+              <div className="space-y-4">
+                {visibleHistoryDayGroups.map((group, index) => (
+                  <div key={group.dateKey} className="space-y-2">
+                    {index === Math.max(0, visibleHistoryDayGroups.length - 3) && (
+                      <div ref={historyLoadTriggerRef} className="h-px" />
+                    )}
+                    <div className="text-center text-gray-500 font-medium">
+                      {group.date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
+                    </div>
+                    {group.activities.map((activity) => {
+                      const ActivityIcon = activityTypes[activity.type]?.icon;
+                      const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
+
+                      return (
+                        <div key={activity.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-3">
+                          <div className="flex gap-3">
+                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${activityTypes[activity.type]?.color || 'bg-gray-100 text-gray-600'}`}>
+                              {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <div className="font-semibold text-gray-800">{activityTypes[activity.type]?.label}</div>
+                                  <div className="text-sm text-gray-500">
+                                    {activity.startTime && formatTime(activity.startTime)}
+                                    {duration && ` - ${formatTime(activity.endTime)} (${duration})`}
+                                  </div>
+                                </div>
+                                <div className="flex gap-1">
+                                  <button onClick={() => editActivity(activity)} className="p-2 rounded-lg hover:bg-gray-100" title="Редактировать">
+                                    <Edit2 className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                  <button onClick={() => deleteActivity(activity.id)} className="p-2 rounded-lg hover:bg-gray-100" title="Удалить">
+                                    <Trash2 className="w-4 h-4 text-gray-500" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {activity.type === 'breastfeeding' && (
+                                <div className="text-sm text-gray-600 mt-1">Левая: {Math.floor(activity.leftDuration / 60)}м, Правая: {Math.floor(activity.rightDuration / 60)}м</div>
+                              )}
+                              {activity.foodType && (
+                                <div className="text-sm text-gray-600 mt-1">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
+                              )}
+                              {activity.amount && <div className="text-sm text-gray-600 mt-1">{activity.amount} мл</div>}
+                              {activity.diaperType && <div className="text-sm text-gray-600 mt-1">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
+                              {activity.medicineName && <div className="text-sm text-gray-600 mt-1">{activity.medicineName}</div>}
+                              {activity.burpColor && <div className="text-sm text-gray-600 mt-1">Цвет: {activity.burpColor}</div>}
+                              {activity.burpConsistency && <div className="text-sm text-gray-600">Консистенция: {activity.burpConsistency}</div>}
+                              {activity.burpVolume && <div className="text-sm text-gray-600">Объём: {activity.burpVolume === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}</div>}
+                              {activity.comment && <div className="text-sm text-gray-500 mt-1">{activity.comment}</div>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ))}
+
+                {historyDayGroups.length === 0 && (
+                  <div className="bg-white rounded-2xl shadow-lg p-8 text-center text-gray-500">История пока пуста</div>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
+                  <div className="flex justify-between items-center mb-4">
+                    <button
+                      onClick={() => setSelectedWeekOffset(prev => prev - 1)}
+                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                    >
+                      <ArrowLeft className="w-5 h-5" />
+                    </button>
+                    <h3 className="font-semibold text-sm text-center px-2">{formatWeekRange()}</h3>
+                    <button
+                      onClick={() => setSelectedWeekOffset(prev => prev + 1)}
+                      className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
+                      disabled={selectedWeekOffset >= 0}
+                    >
+                      <ArrowLeft className="w-5 h-5 rotate-180" style={{ opacity: selectedWeekOffset >= 0 ? 0.3 : 1 }} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 overflow-x-auto">
+                  <div>
+                    <div className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 mb-2">
+                      <div className="text-[11px] text-gray-400 font-semibold uppercase text-center pt-1">Час</div>
+                      {weekDays.map((day, i) => (
+                        <div key={i} className="text-center leading-tight">
+                          <div className="text-xs font-semibold text-gray-600 uppercase">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
+                          <div className="text-xs text-gray-400">{day.getDate()}</div>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="space-y-2">
+                      {Array.from({ length: 24 }, (_, hour) => (
+                        <div key={hour} className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 items-center">
+                          <div className="text-[12px] text-gray-400 text-center">{hour.toString().padStart(2, '0')}</div>
+                          {weekDays.map((day, dayIndex) => {
+                            const { dominantType, fillPercent } = getCellSummary(day, hour);
+                            const fillColor = dominantType ? indicatorColors[dominantType] : '#e5e7eb';
+                            const title = dominantType
+                              ? `${activityTypes[dominantType]?.label || 'Активность'} · занято ${fillPercent}% часа`
+                              : 'Нет активности';
+
+                            return (
+                              <div
+                                key={`${hour}-${dayIndex}`}
+                                className="h-8 rounded-md border border-gray-100"
+                                style={{
+                                  background: fillPercent > 0
+                                    ? `linear-gradient(to top, ${fillColor} 0%, ${fillColor} ${fillPercent}%, #e5e7eb ${fillPercent}%, #e5e7eb 100%)`
+                                    : '#e5e7eb',
+                                }}
+                                title={title}
+                              />
+                            );
+                          })}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
+                  <h3 className="text-sm font-semibold mb-3 text-gray-700">Легенда</h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {Object.entries(activityTypes).map(([key, data]) => {
+                      const Icon = data.icon;
+                      return (
+                        <div key={key} className="rounded-lg p-2 border border-gray-100 flex items-center gap-2 bg-white">
+                          <span className={`w-2.5 h-2.5 rounded-full ${getIndicatorColorClass(key)}`} />
+                          <Icon className="w-4 h-4 flex-shrink-0 text-gray-500" />
+                          <span className="text-xs font-medium text-gray-700">{data.label}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+        {renderBottomNavigation()}
+      </>
+    );
+  }
+
+  if (view === 'stats') {
+    const weekStart = getWeekStart(selectedWeekOffset);
+
     const getWeekStats = () => {
       const weekActivities = activities.filter(a => {
         const activityDate = new Date(a.startTime);
@@ -2557,7 +2802,7 @@ const ActivityTracker = () => {
           stats[activity.type] = { count: 0, totalDuration: 0 };
         }
         stats[activity.type].count++;
-        
+
         if (activity.startTime && activity.endTime) {
           stats[activity.type].totalDuration += new Date(activity.endTime) - new Date(activity.startTime);
         } else if (activity.type === 'breastfeeding') {
@@ -2585,145 +2830,106 @@ const ActivityTracker = () => {
     };
 
     const weekStats = getWeekStats();
-    
+
     return (
       <>
         <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        {/* Отступ для Telegram заголовка */}
-        <div className="h-16" />
-        
-        <div className="max-w-7xl mx-auto px-4">
-          {/* Header */}
-          <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
-            <BarChart3 className="w-6 h-6 mr-2 text-purple-600" />
-            <h2 className="text-xl font-semibold">Статистика</h2>
-          </div>
-
-          {/* Week Navigation */}
-          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => {
-                  setSelectedWeekOffset(prev => prev - 1);
-                  if (tg) tg.HapticFeedback?.impactOccurred('light');
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200"
-              >
-                <ArrowLeft className="w-5 h-5" />
-              </button>
-              <div className="text-center">
-                <div className="font-semibold text-lg">{formatWeekRange()}</div>
-                {selectedWeekOffset === 0 && <div className="text-sm text-gray-500">Текущая неделя</div>}
-              </div>
-              <button
-                onClick={() => {
-                  setSelectedWeekOffset(prev => prev + 1);
-                  if (tg) tg.HapticFeedback?.impactOccurred('light');
-                }}
-                className="p-2 hover:bg-gray-100 rounded-lg active:bg-gray-200"
-                disabled={selectedWeekOffset >= 0}
-              >
-                <ArrowLeft className="w-5 h-5 rotate-180" style={{ opacity: selectedWeekOffset >= 0 ? 0.3 : 1 }} />
-              </button>
+          <div className="max-w-2xl mx-auto p-4">
+            <div className="mb-4 bg-white rounded-2xl shadow-lg p-4">
+              <h2 className="text-xl font-semibold">Статистика</h2>
             </div>
-          </div>
 
-          {/* Timeline Table */}
-          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4 overflow-x-auto">
-            <div>
-              <div className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 mb-2">
-                <div className="text-[11px] text-gray-400 font-semibold uppercase text-center pt-1">Час</div>
-                {weekDays.map((day, i) => (
-                  <div key={i} className="text-center leading-tight">
-                    <div className="text-xs font-semibold text-gray-600 uppercase">{day.toLocaleDateString('ru-RU', { weekday: 'short' })}</div>
-                    <div className="text-xs text-gray-400">{day.getDate()}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="space-y-2">
-                {Array.from({ length: 24 }, (_, hour) => (
-                  <div key={hour} className="grid grid-cols-[28px_repeat(7,minmax(0,1fr))] gap-1.5 items-center">
-                    <div className="text-[12px] text-gray-400 text-center">{hour.toString().padStart(2, '0')}</div>
-                    {weekDays.map((day, dayIndex) => {
-                      const { dominantType, fillPercent } = getCellSummary(day, hour);
-                      const fillColor = dominantType ? indicatorColors[dominantType] : '#e5e7eb';
-                      const title = dominantType
-                        ? `${activityTypes[dominantType]?.label || 'Активность'} · занято ${fillPercent}% часа`
-                        : 'Нет активности';
-
-                      return (
-                        <div
-                          key={`${hour}-${dayIndex}`}
-                          className="h-8 rounded-md border border-gray-100"
-                          style={{
-                            background: fillPercent > 0
-                              ? `linear-gradient(to top, ${fillColor} 0%, ${fillColor} ${fillPercent}%, #e5e7eb ${fillPercent}%, #e5e7eb 100%)`
-                              : '#e5e7eb',
-                          }}
-                          title={title}
-                        />
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Legend */}
-          <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
-            <h3 className="text-sm font-semibold mb-3 text-gray-700">Легенда</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {Object.entries(activityTypes).map(([key, data]) => {
-                const Icon = data.icon;
-                return (
-                  <div key={key} className="rounded-lg p-2 border border-gray-100 flex items-center gap-2 bg-white">
-                    <span className={`w-2.5 h-2.5 rounded-full ${getIndicatorColorClass(key)}`} />
-                    <Icon className="w-4 h-4 flex-shrink-0 text-gray-500" />
-                    <span className="text-xs font-medium text-gray-700">{data.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Week Summary Statistics */}
-          <div className="bg-white rounded-2xl shadow-lg p-4">
-            <h3 className="text-sm font-semibold mb-3 text-gray-700">Сводка за неделю</h3>
-            {Object.keys(weekStats).length > 0 ? (
-              <div className="space-y-3">
-                {Object.entries(weekStats).map(([type, data]) => {
-                  const ActivityIcon = activityTypes[type]?.icon;
-                  const duration = formatDuration(0, data.avgDurationPerDay);
-                  return (
-                    <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
-                          <span className="font-semibold">{activityTypes[type]?.label}</span>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-semibold">{formatAverageCount(data.avgCountPerDay)} раз/день</div>
-                          {duration && (
-                            <div className="text-sm opacity-75">
-                              {duration}/день
-                            </div>
-                          )}
+            <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
+              <h3 className="text-sm font-semibold mb-3 text-gray-700">Средние дневные показатели за неделю</h3>
+              {Object.keys(weekStats).length > 0 ? (
+                <div className="space-y-3">
+                  {Object.entries(weekStats).map(([type, data]) => {
+                    const ActivityIcon = activityTypes[type]?.icon;
+                    const duration = formatDuration(0, data.avgDurationPerDay);
+                    return (
+                      <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
+                            <span className="font-semibold">{activityTypes[type]?.label}</span>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-semibold">{formatAverageCount(data.avgCountPerDay)} раз/день</div>
+                            {duration && <div className="text-sm opacity-75">{duration}/день</div>}
+                          </div>
                         </div>
                       </div>
-                    </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-center text-gray-500 py-4">На этой неделе нет записей</div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-4">
+              <h3 className="text-sm font-semibold mb-3 text-gray-700">Разделы по активностям</h3>
+              <div className="space-y-2">
+                {Object.entries(activityTypes).map(([type, data]) => {
+                  const Icon = data.icon;
+                  return (
+                    <button
+                      key={type}
+                      onClick={() => {
+                        setSelectedStatsActivityType(type);
+                        setView('stats-activity-detail');
+                      }}
+                      className="w-full flex items-center justify-between rounded-xl border border-gray-100 p-3 hover:bg-gray-50"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className={`w-9 h-9 rounded-full flex items-center justify-center ${data.color}`}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <span className="font-medium text-gray-800">{data.label}</span>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-400" />
+                    </button>
                   );
                 })}
               </div>
-            ) : (
-              <div className="text-center text-gray-500 py-4">На этой неделе нет записей</div>
-            )}
+            </div>
           </div>
         </div>
-      </div>
-      {renderBottomNavigation()}
-    </>
+        {renderBottomNavigation()}
+      </>
+    );
+  }
+
+  if (view === 'stats-activity-detail') {
+    const activityMeta = selectedStatsActivityType ? activityTypes[selectedStatsActivityType] : null;
+    const ActivityIcon = activityMeta?.icon;
+
+    return (
+      <>
+        <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
+          <div className="max-w-2xl mx-auto p-4">
+            <div className="mb-4 bg-white rounded-2xl shadow-lg p-4 flex items-center gap-3">
+              <button
+                onClick={() => setView('stats')}
+                className="p-2 rounded-lg hover:bg-gray-100"
+                title="Назад"
+              >
+                <ArrowLeft className="w-5 h-5" />
+              </button>
+              <div>
+                <h2 className="text-xl font-semibold">{activityMeta?.label || 'Раздел активности'}</h2>
+                <p className="text-sm text-gray-500">Здесь скоро появится детальная аналитика.</p>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-8 text-center text-gray-500">
+              {ActivityIcon && <ActivityIcon className="w-10 h-10 mx-auto mb-3 text-gray-400" />}
+              Экран в разработке
+            </div>
+          </div>
+        </div>
+        {renderBottomNavigation()}
+      </>
     );
   }
 
