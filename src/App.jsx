@@ -60,6 +60,7 @@ const ActivityTracker = () => {
   const [isSavingProfile, setIsSavingProfile] = useState(false); // Profile save state
   const [isSavingGrowth, setIsSavingGrowth] = useState(false); // Growth save state
   const [notificationHelpers, setNotificationHelpers] = useState(null);
+  const [notifications, setNotifications] = useState([]);
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
   const [isOnboardingStatusResolved, setIsOnboardingStatusResolved] = useState(false);
   const activeNamespaceRef = useRef('global');
@@ -277,6 +278,30 @@ const ActivityTracker = () => {
     if (savedGrowth) setGrowthData(savedGrowth);
   }, []);
 
+  const preloadNotifications = useCallback(async () => {
+    try {
+      // Сначала пытаемся загрузить из кеша (быстро)
+      const cached = await cacheService.get('notifications');
+      if (cached) {
+        setNotifications(cached);
+        console.log('📬 Notifications loaded from cache');
+      }
+
+      // Затем загружаем из сети (если есть helpers)
+      if (notificationHelpers) {
+        const { data, error } = await notificationHelpers.getNotifications();
+        if (data && !error) {
+          setNotifications(data);
+          await cacheService.set('notifications', data, CACHE_TTL_SECONDS);
+          console.log('📬 Notifications loaded from network and cached');
+        }
+      }
+    } catch (error) {
+      console.error('Preload notifications error:', error);
+      // Не критично - просто не предзагружаем
+    }
+  }, [notificationHelpers]);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setAuthError(null);
@@ -363,6 +388,16 @@ const ActivityTracker = () => {
           if (nextNamespace !== potentialNamespace) {
             console.log('📝 Обновление namespace после авторизации:', nextNamespace);
             cacheService.setNamespace(nextNamespace);
+          }
+
+          // Загружаем notification helpers заранее для предзагрузки
+          if (!notificationHelpers) {
+            try {
+              const notifModule = await import('./utils/notifications.js');
+              setNotificationHelpers(() => notifModule.notificationHelpers);
+            } catch (error) {
+              console.error('Failed to load notification helpers:', error);
+            }
           }
 
           // Обновляем ссылку на текущий namespace
@@ -504,6 +539,10 @@ const ActivityTracker = () => {
           }
 
           setIsOnboardingStatusResolved(true);
+          
+          // Фоновая загрузка уведомлений (не блокирует UI)
+          void preloadNotifications();
+          
         } catch (supabaseError) {
           console.error('Supabase error:', supabaseError);
           setAuthError('Supabase недоступен - используется кеш');
@@ -908,18 +947,6 @@ const ActivityTracker = () => {
     return stats;
   };
 
-  // Throttled cache save для таймеров - сохраняем раз в 10 секунд вместо каждую секунду
-  const saveTimersToCache = useCallback(
-    debounce((timersData, pausedData, metaData) => {
-      Promise.all([
-        cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
-        cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
-        cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
-      ]);
-    }, 10000), // Сохраняем раз в 10 секунд
-    []
-  );
-
   useEffect(() => {
     if (window.Telegram?.WebApp) {
       const telegram = window.Telegram.WebApp;
@@ -948,6 +975,18 @@ const ActivityTracker = () => {
       tg.MainButton.offClick(saveActivity);
     };
   }, [view, tg, handleBack, saveActivity, editingId, isSaving]);
+
+  // Throttled cache save для таймеров - сохраняем раз в 10 секунд вместо каждую секунду
+  const saveTimersToCache = useCallback(
+    debounce((timersData, pausedData, metaData) => {
+      Promise.all([
+        cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
+        cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
+        cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
+      ]);
+    }, 10000), // Сохраняем раз в 10 секунд
+    []
+  );
 
   useEffect(() => {
     if (!isLoading) {
@@ -2702,6 +2741,8 @@ const ActivityTracker = () => {
             activityTypes={activityTypes}
             notificationHelpers={notificationHelpers}
             isAuthenticated={isAuthenticated}
+            initialNotifications={notifications}
+            onNotificationsChange={setNotifications}
           />
         </Suspense>
         {renderBottomNavigation()}

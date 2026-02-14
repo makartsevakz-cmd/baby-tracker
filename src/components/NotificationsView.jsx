@@ -10,7 +10,9 @@ const NotificationsView = ({
   showBackButton = true,
   activityTypes,
   notificationHelpers,
-  isAuthenticated 
+  isAuthenticated,
+  initialNotifications = [],
+  onNotificationsChange
 }) => {
   const getCurrentLocalTime = () => {
     const now = new Date();
@@ -30,8 +32,8 @@ const NotificationsView = ({
 
   const isAndroid = Platform.isAndroid();
 
-  const [notifications, setNotifications] = useState([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [notifications, setNotifications] = useState(initialNotifications);
+  const [isLoading, setIsLoading] = useState(!initialNotifications.length);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
@@ -48,14 +50,20 @@ const NotificationsView = ({
   ];
 
   const loadNotifications = async () => {
-    setIsLoading(true);
+    // Если уже есть данные из props - не показываем loader
+    if (notifications.length === 0) {
+      setIsLoading(true);
+    }
     
     try {
       if (isAuthenticated && notificationHelpers) {
         const { data, error } = await notificationHelpers.getNotifications();
         if (data) {
           setNotifications(data);
-          // Сохраняем в кеш для offline режима
+          // Уведомляем родительский компонент
+          if (onNotificationsChange) {
+            onNotificationsChange(data);
+          }
           await cacheService.set('notifications', data, CACHE_TTL_SECONDS);
         } else {
           console.error('Load notifications error:', error);
@@ -64,6 +72,9 @@ const NotificationsView = ({
         const saved = await cacheService.get('notifications');
         if (saved) {
           setNotifications(saved);
+          if (onNotificationsChange) {
+            onNotificationsChange(saved);
+          }
         }
       }
     } finally {
@@ -72,8 +83,15 @@ const NotificationsView = ({
   };
 
   useEffect(() => {
-    loadNotifications();
-  }, [isAuthenticated, notificationHelpers]);
+    // Обновляем из props при изменении
+    if (initialNotifications.length > 0) {
+      setNotifications(initialNotifications);
+      setIsLoading(false);
+    } else if (notificationHelpers) {
+      // Загружаем только если нет данных в props
+      loadNotifications();
+    }
+  }, [isAuthenticated, notificationHelpers, initialNotifications]);
 
   // ── Конвертация локальное ↔ UTC ──────────────────────────────────────────
   const localTimeToUTC = (localHHMM) => {
@@ -136,21 +154,27 @@ const NotificationsView = ({
         if (editingId) {
           const { data, error } = await notificationHelpers.updateNotification(editingId, saveData);
           if (error) throw error;
-          setNotifications(prev => prev.map(n => n.id === editingId ? data : n));
+          const updated = notifications.map(n => n.id === editingId ? data : n);
+          setNotifications(updated);
+          if (onNotificationsChange) onNotificationsChange(updated);
         } else {
           const { data, error } = await notificationHelpers.createNotification(saveData);
           if (error) throw error;
-          setNotifications(prev => [data, ...prev]);
+          const updated = [data, ...notifications];
+          setNotifications(updated);
+          if (onNotificationsChange) onNotificationsChange(updated);
         }
       } else {
         // Fallback to cache
         if (editingId) {
           const updatedNotifications = notifications.map(n => n.id === editingId ? notificationData : n);
           setNotifications(updatedNotifications);
+          if (onNotificationsChange) onNotificationsChange(updatedNotifications);
           await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
         } else {
           const updatedNotifications = [notificationData, ...notifications];
           setNotifications(updatedNotifications);
+          if (onNotificationsChange) onNotificationsChange(updatedNotifications);
           await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
         }
       }
@@ -174,9 +198,12 @@ const NotificationsView = ({
         const { error } = await notificationHelpers.deleteNotification(id);
         if (error) throw error;
       } else {
-        await cacheService.set('notifications', notifications.filter(n => n.id !== id), CACHE_TTL_SECONDS);
+        const updated = notifications.filter(n => n.id !== id);
+        await cacheService.set('notifications', updated, CACHE_TTL_SECONDS);
       }
-      setNotifications(prev => prev.filter(n => n.id !== id));
+      const updated = notifications.filter(n => n.id !== id);
+      setNotifications(updated);
+      if (onNotificationsChange) onNotificationsChange(updated);
     } catch (error) {
       console.error('Delete notification error:', error);
       alert('Ошибка удаления уведомления');
@@ -190,10 +217,13 @@ const NotificationsView = ({
       if (isAuthenticated && notificationHelpers) {
         const { data, error } = await notificationHelpers.toggleNotification(id, enabled);
         if (error) throw error;
-        setNotifications(prev => prev.map(n => n.id === id ? data : n));
+        const updated = notifications.map(n => n.id === id ? data : n);
+        setNotifications(updated);
+        if (onNotificationsChange) onNotificationsChange(updated);
       } else {
         const updatedNotifications = notifications.map(n => n.id === id ? { ...n, enabled } : n);
         setNotifications(updatedNotifications);
+        if (onNotificationsChange) onNotificationsChange(updatedNotifications);
         await cacheService.set('notifications', updatedNotifications, CACHE_TTL_SECONDS);
       }
     } catch (error) {
