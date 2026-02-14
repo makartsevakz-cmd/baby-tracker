@@ -47,6 +47,9 @@ const ActivityTracker = () => {
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [historyTab, setHistoryTab] = useState('list');
   const [historyVisibleDayCount, setHistoryVisibleDayCount] = useState(7);
+  const [historyFilterType, setHistoryFilterType] = useState('all');
+  const [historyFilterStartDate, setHistoryFilterStartDate] = useState('');
+  const [historyFilterEndDate, setHistoryFilterEndDate] = useState('');
   const [selectedStatsActivityType, setSelectedStatsActivityType] = useState(null);
   const [babyProfile, setBabyProfile] = useState({
     name: '',
@@ -591,10 +594,36 @@ const ActivityTracker = () => {
     return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
   }, [activitiesByChronology]);
 
+  const filteredHistoryActivities = useMemo(() => {
+    const startDate = historyFilterStartDate ? new Date(`${historyFilterStartDate}T00:00:00`) : null;
+    const endDate = historyFilterEndDate ? new Date(`${historyFilterEndDate}T23:59:59`) : null;
+
+    return recentCompletedActivities.filter((activity) => {
+      if (!activity.startTime) return false;
+
+      if (historyFilterType !== 'all' && activity.type !== historyFilterType) {
+        return false;
+      }
+
+      const activityDate = new Date(activity.startTime);
+      if (Number.isNaN(activityDate.getTime())) return false;
+
+      if (startDate && activityDate < startDate) {
+        return false;
+      }
+
+      if (endDate && activityDate > endDate) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [recentCompletedActivities, historyFilterType, historyFilterStartDate, historyFilterEndDate]);
+
   const historyDayGroups = useMemo(() => {
     const groups = new Map();
 
-    recentCompletedActivities.forEach((activity) => {
+    filteredHistoryActivities.forEach((activity) => {
       if (!activity.startTime) return;
       const date = new Date(activity.startTime);
       if (Number.isNaN(date.getTime())) return;
@@ -617,7 +646,7 @@ const ActivityTracker = () => {
         ...group,
         activities: [...group.activities].sort((a, b) => getActivityChronologyTime(b) - getActivityChronologyTime(a)),
       }));
-  }, [recentCompletedActivities, getActivityChronologyTime]);
+  }, [filteredHistoryActivities, getActivityChronologyTime]);
 
   const visibleHistoryDayGroups = useMemo(() => {
     return historyDayGroups.slice(0, historyVisibleDayCount);
@@ -646,7 +675,7 @@ const ActivityTracker = () => {
 
   useEffect(() => {
     setHistoryVisibleDayCount(7);
-  }, [activities.length]);
+  }, [activities.length, historyFilterType, historyFilterStartDate, historyFilterEndDate]);
 
   useEffect(() => {
     if (view !== 'history' || historyTab !== 'list') return;
@@ -731,6 +760,71 @@ const ActivityTracker = () => {
       </div>
     </div>
   );
+
+  const renderActivityDetails = (activity, textClass = 'text-sm opacity-75') => {
+    if (activity.type === 'breastfeeding') {
+      return <div className={textClass}>Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>;
+    }
+
+    if (activity.type === 'burp') {
+      return (
+        <>
+          {activity.burpColor && <div className={textClass}>Цвет: {activity.burpColor}</div>}
+          {activity.burpConsistency && <div className={textClass}>Консистенция: {activity.burpConsistency}</div>}
+          {activity.burpVolume && <div className={textClass}>Объём: {activity.burpVolume === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}</div>}
+        </>
+      );
+    }
+
+    return (
+      <>
+        {activity.foodType && (
+          <div className={textClass}>{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
+        )}
+        {activity.amount && <div className={textClass}>Количество: {activity.amount} мл</div>}
+        {activity.diaperType && <div className={textClass}>{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
+        {activity.medicineName && <div className={textClass}>{activity.medicineName}</div>}
+      </>
+    );
+  };
+
+  const renderRecentActivityCard = (activity) => {
+    const ActivityIcon = activityTypes[activity.type].icon;
+    const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
+
+    return (
+      <div key={activity.id} className={`${activityTypes[activity.type].color} rounded-lg p-3`}>
+        <div className="flex items-start justify-between">
+          <div className="flex items-start flex-1 min-w-0">
+            <ActivityIcon className="w-5 h-5 mr-3 mt-1 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <div className="font-medium">{activityTypes[activity.type].label}</div>
+              <div className="text-sm opacity-75">
+                {activity.startTime && formatTime(activity.startTime)}
+                {duration && ` - ${formatTime(activity.endTime)} (${duration})`}
+              </div>
+              {renderActivityDetails(activity)}
+              {activity.comment && <div className="text-sm opacity-75 mt-1">{activity.comment}</div>}
+            </div>
+          </div>
+          <div className="flex gap-2 ml-2">
+            <button
+              onClick={() => editActivity(activity)}
+              className="p-2 hover:bg-white/50 rounded-lg transition-colors"
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => deleteActivity(activity.id)}
+              className="p-2 hover:bg-white/50 rounded-lg transition-colors"
+            >
+              <Trash2 className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const getTotalDuration = (timerType) => {
     const activeTimerStart = Number(timers[timerType]);
@@ -1893,10 +1987,7 @@ const ActivityTracker = () => {
     return (
       <>
         <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        {/* Отступ для Telegram заголовка */}
-        <div className="h-16" />
-        
-        <div className="max-w-2xl mx-auto px-4">
+        <div className="max-w-2xl mx-auto p-4">
           <div className="bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center justify-between gap-3 mb-6">
               <button
@@ -2177,9 +2268,7 @@ const ActivityTracker = () => {
   if (view === 'onboarding') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        <div className="h-16" />
-
-        <div className="max-w-2xl mx-auto px-4">
+        <div className="max-w-2xl mx-auto p-4">
           <div className="mb-4 bg-white rounded-2xl shadow-lg p-6">
             <div className="flex items-center gap-2 mb-3">
               <Baby className="w-6 h-6 text-purple-600" />
@@ -2237,10 +2326,7 @@ const ActivityTracker = () => {
     return (
       <>
         <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
-        {/* Отступ для Telegram заголовка */}
-        <div className="h-16" />
-        
-        <div className="max-w-2xl mx-auto px-4">
+        <div className="max-w-2xl mx-auto p-4">
           {/* Header */}
           <div className="flex items-center mb-4 bg-white rounded-2xl shadow-lg p-4">
             <button
@@ -2636,6 +2722,43 @@ const ActivityTracker = () => {
 
             {historyTab === 'list' ? (
               <div className="space-y-4">
+                <div className="bg-white rounded-2xl shadow-lg p-4 space-y-3">
+                  <h3 className="text-sm font-semibold text-gray-700">Фильтры</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Дата от</label>
+                      <input
+                        type="date"
+                        value={historyFilterStartDate}
+                        onChange={(e) => setHistoryFilterStartDate(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-500 mb-1">Дата до</label>
+                      <input
+                        type="date"
+                        value={historyFilterEndDate}
+                        onChange={(e) => setHistoryFilterEndDate(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-500 mb-1">Активность</label>
+                    <select
+                      value={historyFilterType}
+                      onChange={(e) => setHistoryFilterType(e.target.value)}
+                      className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                    >
+                      <option value="all">Все активности</option>
+                      {Object.entries(activityTypes).map(([key, type]) => (
+                        <option key={key} value={key}>{type.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
                 {visibleHistoryDayGroups.map((group, index) => (
                   <div key={group.dateKey} className="space-y-2">
                     {index === Math.max(0, visibleHistoryDayGroups.length - 3) && (
@@ -2644,58 +2767,14 @@ const ActivityTracker = () => {
                     <div className="text-center text-gray-500 font-medium">
                       {group.date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })}
                     </div>
-                    {group.activities.map((activity) => {
-                      const ActivityIcon = activityTypes[activity.type]?.icon;
-                      const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
-
-                      return (
-                        <div key={activity.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 p-3">
-                          <div className="flex gap-3">
-                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${activityTypes[activity.type]?.color || 'bg-gray-100 text-gray-600'}`}>
-                              {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-start justify-between gap-2">
-                                <div>
-                                  <div className="font-semibold text-gray-800">{activityTypes[activity.type]?.label}</div>
-                                  <div className="text-sm text-gray-500">
-                                    {activity.startTime && formatTime(activity.startTime)}
-                                    {duration && ` - ${formatTime(activity.endTime)} (${duration})`}
-                                  </div>
-                                </div>
-                                <div className="flex gap-1">
-                                  <button onClick={() => editActivity(activity)} className="p-2 rounded-lg hover:bg-gray-100" title="Редактировать">
-                                    <Edit2 className="w-4 h-4 text-gray-500" />
-                                  </button>
-                                  <button onClick={() => deleteActivity(activity.id)} className="p-2 rounded-lg hover:bg-gray-100" title="Удалить">
-                                    <Trash2 className="w-4 h-4 text-gray-500" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              {activity.type === 'breastfeeding' && (
-                                <div className="text-sm text-gray-600 mt-1">Левая: {Math.floor(activity.leftDuration / 60)}м, Правая: {Math.floor(activity.rightDuration / 60)}м</div>
-                              )}
-                              {activity.foodType && (
-                                <div className="text-sm text-gray-600 mt-1">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
-                              )}
-                              {activity.amount && <div className="text-sm text-gray-600 mt-1">{activity.amount} мл</div>}
-                              {activity.diaperType && <div className="text-sm text-gray-600 mt-1">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
-                              {activity.medicineName && <div className="text-sm text-gray-600 mt-1">{activity.medicineName}</div>}
-                              {activity.burpColor && <div className="text-sm text-gray-600 mt-1">Цвет: {activity.burpColor}</div>}
-                              {activity.burpConsistency && <div className="text-sm text-gray-600">Консистенция: {activity.burpConsistency}</div>}
-                              {activity.burpVolume && <div className="text-sm text-gray-600">Объём: {activity.burpVolume === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}</div>}
-                              {activity.comment && <div className="text-sm text-gray-500 mt-1">{activity.comment}</div>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    <div className="space-y-3">
+                      {group.activities.map((activity) => renderRecentActivityCard(activity))}
+                    </div>
                   </div>
                 ))}
 
                 {historyDayGroups.length === 0 && (
-                  <div className="bg-white rounded-2xl shadow-lg p-8 text-center text-gray-500">История пока пуста</div>
+                  <div className="bg-white rounded-2xl shadow-lg p-8 text-center text-gray-500">По выбранным фильтрам записей нет</div>
                 )}
               </div>
             ) : (
@@ -2959,10 +3038,7 @@ const ActivityTracker = () => {
   return (
     <>
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-28">
-      {/* Отступ для Telegram заголовка */}
-      <div className="h-16" />
-      
-      <div className="max-w-2xl mx-auto px-4">
+      <div className="max-w-2xl mx-auto p-4">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 bg-white rounded-2xl shadow-lg p-4">
           <button
@@ -3037,61 +3113,7 @@ const ActivityTracker = () => {
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6">
           <h2 className="text-lg font-semibold mb-4">Последние записи ({recentCompletedActivities.length})</h2>
           <div className="space-y-3">
-            {recentCompletedActivities.slice(0, 10).map(activity => {
-              const ActivityIcon = activityTypes[activity.type].icon;
-              const duration = activity.startTime && activity.endTime ? formatDuration(activity.startTime, activity.endTime) : '';
-              
-              return (
-                <div key={activity.id} className={`${activityTypes[activity.type].color} rounded-lg p-3`}>
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start flex-1 min-w-0">
-                      <ActivityIcon className="w-5 h-5 mr-3 mt-1 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium">{activityTypes[activity.type].label}</div>
-                        <div className="text-sm opacity-75">
-                          {activity.startTime && formatTime(activity.startTime)}
-                          {duration && ` - ${formatTime(activity.endTime)} (${duration})`}
-                        </div>
-                        {activity.type === 'breastfeeding' && (
-                          <div className="text-sm opacity-75">Л: {Math.floor(activity.leftDuration / 60)}м, П: {Math.floor(activity.rightDuration / 60)}м</div>
-                        )}
-                        {activity.type === 'burp' ? (
-                          <>
-                            {activity.burpColor && <div className="text-sm opacity-75">Цвет: {activity.burpColor}</div>}
-                            {activity.burpConsistency && <div className="text-sm opacity-75">Консистенция: {activity.burpConsistency}</div>}
-                            {activity.burpVolume && <div className="text-sm opacity-75">Объём: {activity.burpVolume === 'less_than_teaspoon' ? 'меньше чайной ложки' : 'больше чайной ложки'}</div>}
-                          </>
-                        ) : (
-                          <>
-                            {activity.foodType && (
-                              <div className="text-sm opacity-75">{activity.foodType === 'breast_milk' ? 'Грудное молоко' : activity.foodType === 'formula' ? 'Смесь' : 'Вода'}</div>
-                            )}
-                            {activity.amount && <div className="text-sm opacity-75">Количество: {activity.amount} мл</div>}
-                            {activity.diaperType && <div className="text-sm opacity-75">{activity.diaperType === 'wet' ? 'Мокрый' : 'Грязный'}</div>}
-                            {activity.medicineName && <div className="text-sm opacity-75">{activity.medicineName}</div>}
-                          </>
-                        )}
-                        {activity.comment && <div className="text-sm opacity-75 mt-1">{activity.comment}</div>}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 ml-2">
-                      <button
-                        onClick={() => editActivity(activity)}
-                        className="p-2 hover:bg-white/50 rounded-lg transition-colors"
-                      >
-                        <Edit2 className="w-4 h-4" />
-                      </button>
-                      <button
-                        onClick={() => deleteActivity(activity.id)}
-                        className="p-2 hover:bg-white/50 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+            {recentCompletedActivities.slice(0, 10).map((activity) => renderRecentActivityCard(activity))}
             {recentCompletedActivities.length === 0 && (
               <div className="text-center text-gray-500 py-8">Добавьте первую запись</div>
             )}
