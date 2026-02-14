@@ -3283,6 +3283,7 @@ const ActivityTracker = () => {
         <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-500">Загрузка настроек...</div>}>
           <SettingsView
             tg={tg}
+            isTelegramApp={Platform.isTelegram()}
             onBack={() => navigateTo('main')}
             userEmail={currentUser?.email || ''}
             settings={userSettings}
