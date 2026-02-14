@@ -12,7 +12,8 @@ const NotificationsView = ({
   notificationHelpers,
   isAuthenticated,
   initialNotifications = [],
-  onNotificationsChange
+  onNotificationsChange,
+  userSettings
 }) => {
   const getCurrentLocalTime = () => {
     const now = new Date();
@@ -31,6 +32,28 @@ const NotificationsView = ({
   });
 
   const isAndroid = Platform.isAndroid();
+  const isEnglish = userSettings?.language === 'en';
+  const isLongRunningReminderEnabled = Boolean(userSettings?.systemNotifications?.longRunningActivityReminder);
+
+  const daysOfWeek = isEnglish
+    ? [
+      { value: 0, label: 'Sun' },
+      { value: 1, label: 'Mon' },
+      { value: 2, label: 'Tue' },
+      { value: 3, label: 'Wed' },
+      { value: 4, label: 'Thu' },
+      { value: 5, label: 'Fri' },
+      { value: 6, label: 'Sat' },
+    ]
+    : [
+      { value: 0, label: 'Вс' },
+      { value: 1, label: 'Пн' },
+      { value: 2, label: 'Вт' },
+      { value: 3, label: 'Ср' },
+      { value: 4, label: 'Чт' },
+      { value: 5, label: 'Пт' },
+      { value: 6, label: 'Сб' },
+    ];
 
   const [notifications, setNotifications] = useState(initialNotifications);
   const [isLoading, setIsLoading] = useState(!initialNotifications.length);
@@ -38,16 +61,6 @@ const NotificationsView = ({
   const [editingId, setEditingId] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
   const [formData, setFormData] = useState(() => getDefaultFormData());
-
-  const daysOfWeek = [
-    { value: 0, label: 'Вс' },
-    { value: 1, label: 'Пн' },
-    { value: 2, label: 'Вт' },
-    { value: 3, label: 'Ср' },
-    { value: 4, label: 'Чт' },
-    { value: 5, label: 'Пт' },
-    { value: 6, label: 'Сб' },
-  ];
 
   const loadNotifications = async () => {
     // Если уже есть данные из props - не показываем loader
@@ -329,7 +342,9 @@ const NotificationsView = ({
               </button>
               <Bell className="w-6 h-6 mr-2" />
               <h2 className="text-xl font-semibold">
-                {editingId ? 'Изменить уведомление' : 'Новое уведомление'}
+                {editingId
+                  ? (isEnglish ? 'Edit reminder' : 'Изменить уведомление')
+                  : (isEnglish ? 'New reminder' : 'Новое уведомление')}
               </h2>
             </div>
 
@@ -530,6 +545,14 @@ const NotificationsView = ({
             <Plus className="w-5 h-5" />
           </button>
         </div>
+
+        {!isLongRunningReminderEnabled && (
+          <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 mb-4 text-sm text-gray-700">
+            {isEnglish
+              ? 'System reminder for long running activity (>7h) is disabled in Settings.'
+              : 'Системное напоминание о длительной активности (>7ч) отключено в Настройках.'}
+          </div>
+        )}
 
         {/* Info card */}
         <div className="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 mb-4">
