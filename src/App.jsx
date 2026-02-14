@@ -285,7 +285,24 @@ const ActivityTracker = () => {
 
       if (hasSupabase) {
         const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
-        cacheService.setNamespace(buildUserNamespace(null, telegramUser));
+        
+        // КРИТИЧЕСКИ ВАЖНО: Проверяем смену пользователя ДО установки namespace
+        const potentialNamespace = buildUserNamespace(null, telegramUser);
+        const previousNamespace = activeNamespaceRef.current;
+        const userChanged = previousNamespace !== 'global' && previousNamespace !== potentialNamespace;
+        
+        if (userChanged) {
+          console.log('🔄 Обнаружена смена пользователя Telegram!');
+          console.log('   Предыдущий namespace:', previousNamespace);
+          console.log('   Новый namespace:', potentialNamespace);
+          
+          // Очищаем старый кеш ПЕРЕД установкой нового namespace
+          await cacheService.clear();
+          console.log('🗑️ Кеш предыдущего пользователя очищен');
+        }
+        
+        // Устанавливаем namespace для текущего пользователя
+        cacheService.setNamespace(potentialNamespace);
 
         try {
           const { user, error, mode } = await supabaseModule.authHelpers.ensureAuthenticatedSession({
@@ -327,11 +344,18 @@ const ActivityTracker = () => {
 
           setIsAuthenticated(Boolean(user));
           const nextNamespace = buildUserNamespace(user, telegramUser);
-          const previousNamespace = activeNamespaceRef.current;
-          cacheService.setNamespace(nextNamespace);
+          
+          // Обновляем namespace с учетом авторизованного пользователя
+          if (nextNamespace !== potentialNamespace) {
+            console.log('📝 Обновление namespace после авторизации:', nextNamespace);
+            cacheService.setNamespace(nextNamespace);
+          }
 
+          // Обновляем ссылку на текущий namespace
           if (previousNamespace !== nextNamespace) {
             activeNamespaceRef.current = nextNamespace;
+            
+            // Очищаем состояние приложения при смене пользователя
             setActivities([]);
             setTimers({});
             setPausedTimers({});
