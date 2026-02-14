@@ -18,3 +18,8 @@ body {
 #root {
   min-height: 100vh;
 }
+/* Минимальная поддержка тёмной темы на уровне документа. */
+body.dark-theme {
+  background-color: #111827;
+  color: #f9fafb;
+}

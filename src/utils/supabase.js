@@ -423,6 +423,13 @@ export const authHelpers = {
     return { data, error };
   },
 
+  async updatePassword(newPassword) {
+    const { data, error } = await supabase.auth.updateUser({
+      password: newPassword,
+    });
+    return { data, error };
+  },
+
   async signOut() {
     const { error } = await supabase.auth.signOut();
     return { error };

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
-import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home, History, ChevronRight } from 'lucide-react';
+import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home, History, ChevronRight, Settings as SettingsIcon } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import supabaseService from './services/supabaseService.js';
 import notificationService from './services/notificationService.js';
+import userSettingsService, { DEFAULT_USER_SETTINGS } from './services/userSettingsService.js';
 import { Platform } from './utils/platform.js';
 const NotificationsView = lazy(() => import('./components/NotificationsView.jsx'));
+const SettingsView = lazy(() => import('./components/SettingsView.jsx'));
 const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
 
 // Debounce helper для throttling
@@ -61,6 +63,8 @@ const ActivityTracker = () => {
   const [growthForm, setGrowthForm] = useState({ date: '', weight: '', height: '' });
   const [editingGrowthId, setEditingGrowthId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
   const [authError, setAuthError] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
   const [isSavingProfile, setIsSavingProfile] = useState(false); // Profile save state
@@ -330,6 +334,7 @@ const ActivityTracker = () => {
         typeof supabaseModule.authHelpers.signInWithTelegram === 'function';
 
       if (hasSupabase) {
+        setCurrentUser(null);
         const telegramUser = window.Telegram?.WebApp?.initDataUnsafe?.user;
         
         // КРИТИЧЕСКИ ВАЖНО: Проверяем смену пользователя ДО установки namespace
@@ -361,6 +366,7 @@ const ActivityTracker = () => {
             console.log('⚠️ Требуется регистрация');
             console.log('🔍 DEBUG: needsAuth =', true, ', authMode = register, isLoading =', false);
             setTelegramUserRef(telegramUser);
+            setCurrentUser(null);
             setNeedsAuth(true);
             setAuthMode('register');
             clearTimeout(loadTimeout);
@@ -372,6 +378,7 @@ const ActivityTracker = () => {
             console.log('⚠️ Требуется вход');
             console.log('🔍 DEBUG: needsAuth = true, authMode = login, isLoading = false');
             setTelegramUserRef(telegramUser);
+            setCurrentUser(null);
             setNeedsAuth(true);
             setAuthMode('login');
             clearTimeout(loadTimeout);
@@ -389,6 +396,7 @@ const ActivityTracker = () => {
           }
 
           setIsAuthenticated(Boolean(user));
+          setCurrentUser(user || null);
           const nextNamespace = buildUserNamespace(user, telegramUser);
           
           // Обновляем namespace с учетом авторизованного пользователя
@@ -426,6 +434,11 @@ const ActivityTracker = () => {
 
           const onboardingFlag = await cacheService.get(ONBOARDING_COMPLETED_KEY);
           setIsOnboardingCompleted(Boolean(onboardingFlag));
+
+          // Настройки загружаем централизованно и отдельно от остальных данных,
+          // чтобы экран настроек был расширяемым и не зависел от структуры конкретных фич.
+          const loadedUserSettings = await userSettingsService.load();
+          setUserSettings(loadedUserSettings);
 
           if (mode === 'anonymous') {
             console.log('Signed in with anonymous Supabase session');
@@ -564,6 +577,8 @@ const ActivityTracker = () => {
         activeNamespaceRef.current = nextNamespace;
         const onboardingFlag = await cacheService.get(ONBOARDING_COMPLETED_KEY);
         setIsOnboardingCompleted(Boolean(onboardingFlag));
+        const loadedUserSettings = await userSettingsService.load();
+        setUserSettings(loadedUserSettings);
         console.log('Using cache fallback (no Telegram or Supabase config)');
         await loadFromCache();
         setIsOnboardingStatusResolved(true);
@@ -719,7 +734,7 @@ const ActivityTracker = () => {
   const renderBottomNavigation = () => (
     <div className="fixed bottom-0 left-0 right-0 z-50 border-t border-purple-100 bg-white/95 backdrop-blur-sm">
       <div className="max-w-2xl mx-auto px-4 py-2">
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-2">
           <button
             onClick={() => navigateTo('main')}
             className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
@@ -755,6 +770,15 @@ const ActivityTracker = () => {
           >
             <Bell className="w-5 h-5 mb-1" />
             Уведомления
+          </button>
+          <button
+            onClick={() => navigateTo('settings')}
+            className={`flex flex-col items-center justify-center rounded-xl py-2 text-xs font-medium transition-colors ${
+              view === 'settings' ? 'bg-purple-100 text-purple-700' : 'text-gray-500'
+            }`}
+          >
+            <SettingsIcon className="w-5 h-5 mb-1" />
+            Настройки
           </button>
         </div>
       </div>
@@ -1198,6 +1222,19 @@ const ActivityTracker = () => {
     }, 60000); // Update every minute
     return () => clearInterval(interval);
   }, []);
+
+  // Применяем язык приложения сразу после изменения настройки.
+  useEffect(() => {
+    const language = userSettings?.language || 'ru';
+    document.documentElement.lang = language;
+  }, [userSettings?.language]);
+
+  // Применяем тему на уровне документа, чтобы смена работала мгновенно.
+  useEffect(() => {
+    const isDark = userSettings?.theme === 'dark';
+    document.documentElement.classList.toggle('dark', isDark);
+    document.body.classList.toggle('dark-theme', isDark);
+  }, [userSettings?.theme]);
 
   // Sync profileForm with babyProfile when entering profile view
   useEffect(() => {
@@ -1689,6 +1726,97 @@ const ActivityTracker = () => {
       timeInputMode: 'manual',
     }));
   };
+
+  // Централизованное обновление настроек пользователя.
+  // Такой подход упрощает расширение экрана новыми типами настроек в будущем.
+  const updateUserSettings = useCallback(async (updater) => {
+    const nextSettings = await userSettingsService.update((current) => {
+      const draft = typeof updater === 'function' ? updater(current) : updater;
+      return draft;
+    });
+    setUserSettings(nextSettings);
+    return nextSettings;
+  }, []);
+
+  const handleLanguageChange = useCallback(async (language) => {
+    await updateUserSettings((current) => ({ ...current, language }));
+  }, [updateUserSettings]);
+
+  const handleThemeChange = useCallback(async (theme) => {
+    await updateUserSettings((current) => ({ ...current, theme }));
+  }, [updateUserSettings]);
+
+  const handleSystemNotificationToggle = useCallback(async (notificationId, enabled) => {
+    await updateUserSettings((current) => ({
+      ...current,
+      systemNotifications: {
+        ...current.systemNotifications,
+        [notificationId]: enabled,
+      },
+    }));
+  }, [updateUserSettings]);
+
+  const handlePasswordChange = useCallback(async ({ currentPassword, newPassword }) => {
+    if (!currentUser?.email) {
+      return { error: 'Не удалось определить email текущего пользователя.' };
+    }
+
+    const { error: reauthError } = await supabaseModule.authHelpers.signInWithEmail(currentUser.email, currentPassword);
+    if (reauthError) {
+      return {
+        error: reauthError.message === 'Invalid login credentials'
+          ? 'Текущий пароль указан неверно.'
+          : 'Не удалось проверить текущий пароль.',
+      };
+    }
+
+    const { error: updateError } = await supabaseModule.authHelpers.updatePassword(newPassword);
+    if (updateError) {
+      return { error: updateError.message || 'Не удалось изменить пароль.' };
+    }
+
+    return { error: null };
+  }, [currentUser?.email]);
+
+  const handleSupportClick = useCallback(() => {
+    const email = 'makartsevakz@gmail.com';
+    const subject = `Поддержка пользователя (${currentUser?.email || 'unknown'})`;
+    const body = [
+      'Здравствуйте!',
+      '',
+      'Опишите ваш вопрос:',
+      '',
+      '---',
+      `Email: ${currentUser?.email || 'unknown'}`,
+      `Версия приложения: ${import.meta.env.VITE_APP_VERSION || 'dev'}`,
+      `Платформа: ${Platform.getCurrentPlatform()}`,
+      `Язык: ${userSettings.language}`,
+      `Тема: ${userSettings.theme}`,
+    ].join('\n');
+
+    window.location.href = `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }, [currentUser?.email, userSettings.language, userSettings.theme]);
+
+  const handleLogout = useCallback(async () => {
+    if (!window.confirm('Выйти из профиля?')) return;
+
+    await supabaseModule.authHelpers.signOut();
+    await cacheService.clear();
+
+    setActivities([]);
+    setTimers({});
+    setPausedTimers({});
+    setTimerMeta({});
+    setNotifications([]);
+    setGrowthData([]);
+    setBabyProfile({ name: '', birthDate: '', photo: null });
+    setCurrentUser(null);
+    setUserSettings(DEFAULT_USER_SETTINGS);
+    setIsAuthenticated(false);
+    setNeedsAuth(true);
+    setAuthMode('login');
+    setView('main');
+  }, []);
 
 // ========================================
   // ОБРАБОТЧИКИ АВТОРИЗАЦИИ
@@ -3028,6 +3156,29 @@ const ActivityTracker = () => {
             isAuthenticated={isAuthenticated}
             initialNotifications={notifications}
             onNotificationsChange={setNotifications}
+            userSettings={userSettings}
+          />
+        </Suspense>
+        {renderBottomNavigation()}
+      </>
+    );
+  }
+
+  if (view === 'settings') {
+    return (
+      <>
+        <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-gray-500">Загрузка настроек...</div>}>
+          <SettingsView
+            tg={tg}
+            onBack={() => navigateTo('main')}
+            userEmail={currentUser?.email || ''}
+            settings={userSettings}
+            onLanguageChange={handleLanguageChange}
+            onThemeChange={handleThemeChange}
+            onSystemNotificationToggle={handleSystemNotificationToggle}
+            onPasswordChange={handlePasswordChange}
+            onSupportClick={handleSupportClick}
+            onLogout={handleLogout}
           />
         </Suspense>
         {renderBottomNavigation()}
