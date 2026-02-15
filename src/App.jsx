@@ -274,6 +274,7 @@ const ActivityTracker = () => {
     };
   };
 
+    // В loadFromCache, примерно строка 288
   const loadFromCache = useCallback(async () => {
     const [savedActivities, savedTimers, savedPaused, savedTimerMeta, savedProfile, savedGrowth] = await Promise.all([
       cacheService.get('baby_activities'),
@@ -288,7 +289,17 @@ const ActivityTracker = () => {
     if (savedTimers) setTimers(savedTimers);
     if (savedPaused) setPausedTimers(savedPaused);
     if (savedTimerMeta) setTimerMeta(savedTimerMeta);
-    if (savedProfile) setBabyProfile(savedProfile);
+    
+    // ⬇️ ДОБАВИТЬ ПРОВЕРКУ
+    if (savedProfile) {
+      // Если в кеше нет id - НЕ используем кеш, загрузим из БД
+      if (savedProfile.id) {
+        setBabyProfile(savedProfile);
+      } else {
+        console.warn('⚠️ Cached profile missing id, will load from DB');
+      }
+    }
+    
     if (savedGrowth) setGrowthData(savedGrowth);
   }, []);
 
