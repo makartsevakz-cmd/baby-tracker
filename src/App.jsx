@@ -247,6 +247,7 @@ const ActivityTracker = () => {
     const isBurp = activity.type === 'burp';
 
     return {
+      baby_id: babyProfile.id, // ⬅️ ДОБАВЛЕНО - КРИТИЧНО!
       type: activity.type,
       startTime: activity.startTime,
       endTime: activity.endTime,
@@ -495,11 +496,13 @@ const ActivityTracker = () => {
 
             if (initialData.profile?.data) {
               const profile = {
+                id: initialData.profile.data.id, // ⬅️ ДОБАВЛЕНО
                 name: initialData.profile.data.name || '',
                 birthDate: initialData.profile.data.birth_date || '',
                 photo: initialData.profile.data.photo_url || null,
               };
               setBabyProfile({
+                id: profile.id, // ⬅️ ДОБАВЛЕНО
                 name: profile.name,
                 birthDate: profile.birthDate,
                 photo: profile.photo,
@@ -543,6 +546,7 @@ const ActivityTracker = () => {
               const profileResult = await supabaseModule.babyHelpers.getProfile();
               if (profileResult?.data) {
                 const fallbackProfile = {
+                  id: profileResult.data.id, // ⬅️ ДОБАВЛЕНО
                   name: profileResult.data.name || '',
                   birthDate: profileResult.data.birth_date || '',
                   photo: profileResult.data.photo_url || null,
@@ -1499,12 +1503,14 @@ const ActivityTracker = () => {
         });
         if (error) throw error;
         setBabyProfile({
+          id: data.id, // ⬅️ ДОБАВЛЕНО
           name: data.name || '',
           birthDate: data.birth_date || '',
           photo: data.photo_url || null,
         });
         await Promise.all([
           cacheService.set('baby_profile', {
+            id: data.id, // ⬅️ ДОБАВЛЕНО
             name: data.name || '',
             birthDate: data.birth_date || '',
             photo: data.photo_url || null,
