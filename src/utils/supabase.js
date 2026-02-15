@@ -13,6 +13,33 @@ export const isSupabaseConfigured =
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+const extractMissingColumnName = (error) => {
+  if (!error || error.code !== '42703') return null;
+
+  const message = String(error.message || error.details || '');
+  const match = message.match(/column\s+"([^"]+)"/i);
+  return match?.[1] || null;
+};
+
+const withMissingColumnFallback = async (payload, execute) => {
+  const fallbackPayload = { ...payload };
+
+  while (true) {
+    const { data, error } = await execute(fallbackPayload);
+    if (!error) return { data, error: null };
+
+    const missingColumn = extractMissingColumnName(error);
+    if (!missingColumn || !(missingColumn in fallbackPayload)) {
+      return { data, error };
+    }
+
+    delete fallbackPayload[missingColumn];
+    console.warn(
+      `⚠️ activities.${missingColumn} не существует в текущей схеме БД. Повторяем запрос без этой колонки.`
+    );
+  }
+};
+
 // ========================================
 // СТАРЫЕ ФУНКЦИИ (для Telegram)
 // ========================================
@@ -538,11 +565,9 @@ export const activityHelpers = {
       activityData.medicine_name = activity.medicineName;
     }
 
-    const { data, error } = await supabase
-      .from('activities')
-      .insert([activityData])
-      .select()
-      .single();
+    const { data, error } = await withMissingColumnFallback(activityData, (payload) =>
+      supabase.from('activities').insert([payload]).select().single()
+    );
     
     return { data, error };
   },
@@ -567,12 +592,9 @@ export const activityHelpers = {
       updateData.medicine_name = activity.medicineName;
     }
 
-    const { data, error } = await supabase
-      .from('activities')
-      .update(updateData)
-      .eq('id', id)
-      .select()
-      .single();
+    const { data, error } = await withMissingColumnFallback(updateData, (payload) =>
+      supabase.from('activities').update(payload).eq('id', id).select().single()
+    );
     
     return { data, error };
   },
