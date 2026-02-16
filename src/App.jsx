@@ -1048,21 +1048,25 @@ const ActivityTracker = () => {
           if (error) throw error;
           
           const updatedActivity = convertFromSupabaseActivity(data);
-          setActivities(prev => prev.map(a => a.id === editingId ? updatedActivity : a));
-          
-          // Обновляем кеш
-          const updatedActivities = activities.map(a => a.id === editingId ? updatedActivity : a);
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+          // 🔧 ИСПРАВЛЕНИЕ: Используем callback чтобы получить актуальный state
+          setActivities(prev => {
+            const updatedActivities = prev.map(a => a.id === editingId ? updatedActivity : a);
+            // Сохраняем в кеш АКТУАЛЬНЫЙ список
+            cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+            return updatedActivities;
+          });
         } else {
           const { data, error } = await supabaseModule.activityHelpers.createActivity(supabaseData);
           if (error) throw error;
           
           const newActivity = convertFromSupabaseActivity(data);
-          setActivities(prev => [newActivity, ...prev]);
-          
-          // Обновляем кеш для offline-режима
-          const updatedActivities = [newActivity, ...activities];
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+          // 🔧 ИСПРАВЛЕНИЕ: Используем callback чтобы получить актуальный state
+          setActivities(prev => {
+            const updatedActivities = [newActivity, ...prev];
+            // Сохраняем в кеш АКТУАЛЬНЫЙ список
+            cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+            return updatedActivities;
+          });
         }
       } else {
         // Fallback to cache
@@ -1098,14 +1102,15 @@ const ActivityTracker = () => {
         if (isAuthenticated) {
           const { error } = await supabaseModule.activityHelpers.deleteActivity(id);
           if (error) throw error;
-          
-          // Обновляем кеш после удаления
-          const updatedActivities = activities.filter(a => a.id !== id);
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
-        } else {
-          await cacheService.set('baby_activities', activities.filter(a => a.id !== id), CACHE_TTL_SECONDS);
         }
-        setActivities(prev => prev.filter(a => a.id !== id));
+        
+        // 🔧 ИСПРАВЛЕНИЕ: Используем callback чтобы получить актуальный state
+        setActivities(prev => {
+          const updatedActivities = prev.filter(a => a.id !== id);
+          // Сохраняем в кеш АКТУАЛЬНЫЙ список
+          cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+          return updatedActivities;
+        });
       } catch (error) {
         console.error('Delete activity error:', error);
         alert('Ошибка удаления активности');
@@ -1238,15 +1243,25 @@ const ActivityTracker = () => {
 
   // Сохраняем при размонтировании компонента (важно!)
   useEffect(() => {
+    // 🔧 ИСПРАВЛЕНИЕ: Используем ref для хранения актуальных значений
+    const timersRef = { current: timers };
+    const pausedTimersRef = { current: pausedTimers };
+    const timerMetaRef = { current: timerMeta };
+    
+    // Обновляем ref при каждом рендере
+    timersRef.current = timers;
+    pausedTimersRef.current = pausedTimers;
+    timerMetaRef.current = timerMeta;
+    
     return () => {
-      // Force save on unmount
+      // Force save on unmount - используем АКТУАЛЬНЫЕ значения из ref
       Promise.all([
-        cacheService.set('active_timers', timers, CACHE_TTL_SECONDS),
-        cacheService.set('paused_timers', pausedTimers, CACHE_TTL_SECONDS),
-        cacheService.set('timer_meta', timerMeta, CACHE_TTL_SECONDS),
+        cacheService.set('active_timers', timersRef.current, CACHE_TTL_SECONDS),
+        cacheService.set('paused_timers', pausedTimersRef.current, CACHE_TTL_SECONDS),
+        cacheService.set('timer_meta', timerMetaRef.current, CACHE_TTL_SECONDS),
       ]);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [timers, pausedTimers, timerMeta]);
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);
@@ -3321,7 +3336,7 @@ const ActivityTracker = () => {
 
   return (
     <>
-    {ENV.isDevelopment && (
+{ENV.isDevelopment && (
         <div style={{
           position: 'fixed',
           top: 0,
