@@ -248,6 +248,7 @@ const ActivityTracker = () => {
 
     return {
       baby_id: babyProfile.id, // ⬅️ ДОБАВЛЕНО - КРИТИЧНО!
+      user_id: currentUser?.id, // ⬅️ ДОБАВИТЬ эту строку
       type: activity.type,
       startTime: activity.startTime,
       endTime: activity.endTime,
