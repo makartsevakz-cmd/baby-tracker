@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home, History, ChevronRight, Settings as SettingsIcon } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
+import ENV from './config/environment';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import supabaseService from './services/supabaseService.js';
 import notificationService from './services/notificationService.js';
@@ -3320,6 +3321,30 @@ const ActivityTracker = () => {
 
   return (
     <>
+    {ENV.isDevelopment && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          background: 'linear-gradient(135deg, #ff6b00 0%, #ff8c00 100%)',
+          color: 'white',
+          padding: '10px 16px',
+          textAlign: 'center',
+          zIndex: 99999,
+          fontSize: '13px',
+          fontWeight: '600',
+          boxShadow: '0 2px 8px rgba(255, 107, 0, 0.3)',
+          borderBottom: '2px solid #ff8c00'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px' }}>🔧</span>
+            <span>DEVELOPMENT MODE - используйте dev-test-1@example.com</span>
+            <span style={{ fontSize: '18px' }}>🔧</span>
+          </div>
+        </div>
+      )}
+      
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-28">
       <div className="max-w-2xl mx-auto p-4">
         {/* Header */}
