@@ -48,6 +48,7 @@ const ActivityTracker = () => {
   const [editingId, setEditingId] = useState(null);
   const [tg, setTg] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true); // 🔧 ИСПРАВЛЕНИЕ: Флаг инициализации для блокировки автосохранения
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [historyTab, setHistoryTab] = useState('list');
   const [historyVisibleDayCount, setHistoryVisibleDayCount] = useState(7);
@@ -331,6 +332,7 @@ const ActivityTracker = () => {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setIsInitializing(true); // 🔧 ИСПРАВЛЕНИЕ: Блокируем автосохранение на время загрузки
     setAuthError(null);
     setIsOnboardingStatusResolved(false);
     
@@ -548,6 +550,9 @@ const ActivityTracker = () => {
           if (savedTimers) setTimers(savedTimers);
           if (savedPaused) setPausedTimers(savedPaused);
           if (savedTimerMeta) setTimerMeta(savedTimerMeta);
+
+          // 🔧 ИСПРАВЛЕНИЕ: Снимаем флаг ПОСЛЕ загрузки таймеров
+          setIsInitializing(false);
 
           await notificationService.initialize();
 
@@ -1235,11 +1240,12 @@ const ActivityTracker = () => {
   );
 
   useEffect(() => {
-    if (!isLoading) {
+    // 🔧 ИСПРАВЛЕНИЕ: Не сохраняем во время инициализации, чтобы избежать race condition
+    if (!isLoading && !isInitializing) {
       // Throttled save - раз в 10 секунд вместо каждую секунду
       saveTimersToCache(timers, pausedTimers, timerMeta);
     }
-  }, [timers, pausedTimers, timerMeta, isLoading, saveTimersToCache]);
+  }, [timers, pausedTimers, timerMeta, isLoading, isInitializing, saveTimersToCache]);
 
   // Сохраняем при размонтировании компонента (важно!)
   useEffect(() => {
