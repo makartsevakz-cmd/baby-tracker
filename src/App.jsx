@@ -648,7 +648,12 @@ const ActivityTracker = () => {
   }, [activities, getActivityChronologyTime]);
 
   const recentCompletedActivities = useMemo(() => {
-    return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
+    const instantActivityTypes = new Set(['bath', 'diaper', 'medicine', 'burp']);
+
+    return activitiesByChronology.filter((activity) => {
+      if (activity.endTime) return true;
+      return instantActivityTypes.has(activity.type) && Boolean(activity.startTime);
+    });
   }, [activitiesByChronology]);
 
   const filteredHistoryActivities = useMemo(() => {
