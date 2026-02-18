@@ -615,6 +615,7 @@ const ActivityTracker = () => {
     } finally {
       clearTimeout(loadTimeout);
       setIsLoading(false);
+      setIsInitializing(false);
     }
   }, [loadFromCache]);
 
