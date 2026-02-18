@@ -56,7 +56,7 @@ const NotificationsView = ({
     ];
 
   const [notifications, setNotifications] = useState(initialNotifications);
-  const [isLoading, setIsLoading] = useState(!initialNotifications.length);
+  const [isLoading, setIsLoading] = useState(!initialNotifications.length && Boolean(notificationHelpers));
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
@@ -103,6 +103,8 @@ const NotificationsView = ({
     } else if (notificationHelpers) {
       // Загружаем только если нет данных в props
       loadNotifications();
+    } else {
+      setIsLoading(false);
     }
   }, [isAuthenticated, notificationHelpers, initialNotifications]);
 
