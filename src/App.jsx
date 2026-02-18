@@ -51,6 +51,14 @@ const buildUserNamespace = (user, telegramUser) => {
   return 'global';
 };
 
+const getTodayDateString = () => {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const ActivityTracker = () => {
   const [activities, setActivities] = useState([]);
   const [view, setView] = useState('main');
@@ -77,7 +85,7 @@ const ActivityTracker = () => {
   });
   const [growthData, setGrowthData] = useState([]); // Array of {date, weight, height}
   const [profileForm, setProfileForm] = useState({ name: '', birthDate: '', photo: null });
-  const [growthForm, setGrowthForm] = useState({ date: '', weight: '', height: '' });
+  const [growthForm, setGrowthForm] = useState({ date: getTodayDateString(), weight: '', height: '' });
   const [editingGrowthId, setEditingGrowthId] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
@@ -648,7 +656,7 @@ const ActivityTracker = () => {
   }, [activities, getActivityChronologyTime]);
 
   const recentCompletedActivities = useMemo(() => {
-    return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
+    return activitiesByChronology.filter((activity) => Boolean(activity.startTime || activity.endTime));
   }, [activitiesByChronology]);
 
   const filteredHistoryActivities = useMemo(() => {
@@ -977,10 +985,12 @@ const ActivityTracker = () => {
       return;
     }
 
-    if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity' || formData.type === 'custom') && formData.endTime) {
-      if (new Date(formData.endTime) <= new Date(formData.startTime)) {
+    if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity' || formData.type === 'custom')
+      && formData.timeInputMode !== 'timer') {
+      const manualDurationMinutes = Number(formData.manualDurationMinutes);
+      if (!Number.isFinite(manualDurationMinutes) || manualDurationMinutes <= 0) {
         if (tg) tg.HapticFeedback?.notificationOccurred('error');
-        alert('Время окончания должно быть позже времени начала');
+        alert('Укажите длительность активности в минутах');
         setIsSaving(false);
         return;
       }
@@ -1038,20 +1048,14 @@ const ActivityTracker = () => {
         activityData.startTime = timerStartTime;
         activityData.endTime = new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
         resetTimer(timerKey);
-      } else if (formData.endTime) {
-        activityData.endTime = formData.endTime;
       } else {
-        // For manual historical records without end time,
-        // keep chronology based on the selected start time.
-        activityData.endTime = activityData.startTime;
+        const manualDurationMinutes = Math.max(0, Number(formData.manualDurationMinutes) || 0);
+        activityData.endTime = new Date(new Date(activityData.startTime).getTime() + manualDurationMinutes * 60 * 1000).toISOString();
       }
     } else if (formData.type === 'custom') {
       activityData.medicineName = String(formData.medicineName || '').trim();
-      if (formData.endTime) {
-        activityData.endTime = formData.endTime;
-      } else {
-        activityData.endTime = activityData.startTime;
-      }
+      const manualDurationMinutes = Math.max(0, Number(formData.manualDurationMinutes) || 0);
+      activityData.endTime = new Date(new Date(activityData.startTime).getTime() + manualDurationMinutes * 60 * 1000).toISOString();
     } else if (formData.type === 'burp') {
       activityData.endTime = activityData.startTime;
       activityData.foodType = null;
@@ -1147,7 +1151,20 @@ const ActivityTracker = () => {
     if (tg) tg.HapticFeedback?.impactOccurred('light');
     setEditingId(activity.id);
     setSelectedActivity(activity.type);
-    setFormData(activity);
+    const isDurationBasedActivity = ['sleep', 'walk', 'activity', 'custom'].includes(activity.type);
+    const durationMinutes = (activity.startTime && activity.endTime)
+      ? Math.max(1, Math.round((new Date(activity.endTime) - new Date(activity.startTime)) / 60000))
+      : '';
+
+    setFormData(
+      isDurationBasedActivity
+        ? {
+          ...activity,
+          timeInputMode: activity.type === 'custom' ? 'manual' : (activity.timeInputMode || 'manual'),
+          manualDurationMinutes: durationMinutes,
+        }
+        : activity
+    );
     setView('add');
   };
 
@@ -1430,11 +1447,11 @@ const ActivityTracker = () => {
     } else if (type === 'medicine') {
       setFormData({ ...baseData, medicineName: '' });
     } else if (type === 'custom') {
-      setFormData({ ...baseData, endTime: '', medicineName: '', comment: '' });
+      setFormData({ ...baseData, medicineName: '', comment: '', manualDurationMinutes: '10', timeInputMode: 'manual' });
     } else {
       setFormData(
         (type === 'sleep' || type === 'walk' || type === 'activity')
-          ? { ...baseData, endTime: '', timeInputMode: null }
+          ? { ...baseData, timeInputMode: null, manualDurationMinutes: '10' }
           : baseData
       );
     }
@@ -1488,8 +1505,8 @@ const ActivityTracker = () => {
       setFormData({ 
         type, 
         startTime,
-        endTime: '',
         comment: '',
+        manualDurationMinutes: '10',
         timeInputMode: hasTimerData ? 'timer' : null,
       });
     }
@@ -1647,7 +1664,7 @@ const ActivityTracker = () => {
       }
       
       setEditingGrowthId(null);
-      setGrowthForm({ date: '', weight: '', height: '' });
+      setGrowthForm({ date: getTodayDateString(), weight: '', height: '' });
     } catch (error) {
       console.error('Save growth record error:', error);
       alert('Ошибка сохранения записи');
@@ -1671,7 +1688,7 @@ const ActivityTracker = () => {
         setGrowthData(prev => prev.filter(r => r.id !== id));
         if (editingGrowthId === id) {
           setEditingGrowthId(null);
-          setGrowthForm({ date: '', weight: '', height: '' });
+          setGrowthForm({ date: getTodayDateString(), weight: '', height: '' });
         }
       } catch (error) {
         console.error('Delete growth record error:', error);
@@ -2365,12 +2382,22 @@ const ActivityTracker = () => {
                     <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.startTime)} onChange={(e) => handleSleepWalkManualChange('startTime', fromLocalDateTimeString(e.target.value))} />
                   </div>
                   <div>
-                    <label className="block mb-2 font-medium">Время окончания:</label>
-                    <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.endTime)} onChange={(e) => handleSleepWalkManualChange('endTime', fromLocalDateTimeString(e.target.value))} />
+                    <label className="block mb-2 font-medium">Длительность (минуты):</label>
+                    <input
+                      type="number"
+                      min="1"
+                      disabled={!editingId && isTimerMode}
+                      className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500"
+                      value={formData.manualDurationMinutes || ''}
+                      onChange={(e) => handleSleepWalkManualChange('manualDurationMinutes', e.target.value)}
+                      placeholder="Например, 45"
+                    />
                   </div>
                   {selectedActivity !== 'activity' && formData.startTime && (
                     <div className="bg-indigo-50 text-indigo-700 rounded-lg p-3 text-sm">
-                      Длительность: {formData.endTime ? (formatDuration(formData.startTime, formData.endTime) || 'меньше 1 минуты') : formatSeconds(getTotalDuration(selectedActivity))}
+                      Длительность: {isTimerMode
+                        ? formatSeconds(getTotalDuration(selectedActivity))
+                        : `${Math.max(0, Number(formData.manualDurationMinutes) || 0)} мин`}
                     </div>
                   )}
                     </>
@@ -2491,16 +2518,18 @@ const ActivityTracker = () => {
                       type="datetime-local"
                       className="w-full border-2 border-gray-200 rounded-lg p-3"
                       value={toLocalDateTimeString(formData.startTime)}
-                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value), timeInputMode: 'manual' }))}
                     />
                   </div>
                   <div>
-                    <label className="block mb-2 font-medium">Время окончания (опционально):</label>
+                    <label className="block mb-2 font-medium">Длительность (минуты):</label>
                     <input
-                      type="datetime-local"
+                      type="number"
+                      min="1"
                       className="w-full border-2 border-gray-200 rounded-lg p-3"
-                      value={toLocalDateTimeString(formData.endTime)}
-                      onChange={(e) => setFormData(prev => ({ ...prev, endTime: fromLocalDateTimeString(e.target.value) }))}
+                      value={formData.manualDurationMinutes || ''}
+                      onChange={(e) => setFormData(prev => ({ ...prev, manualDurationMinutes: e.target.value, timeInputMode: 'manual' }))}
+                      placeholder="Например, 30"
                     />
                   </div>
                 </div>
@@ -2688,7 +2717,7 @@ const ActivityTracker = () => {
                   <button
                     onClick={() => {
                       setEditingGrowthId(null);
-                      setGrowthForm({ date: '', weight: '', height: '' });
+                      setGrowthForm({ date: getTodayDateString(), weight: '', height: '' });
                     }}
                     className="flex-1 bg-gray-500 text-white py-2 rounded-lg text-sm font-medium active:scale-95 transition-transform"
                   >
@@ -3200,13 +3229,34 @@ const ActivityTracker = () => {
         }
       });
 
+      const mergeTypeToStatKey = (type) => {
+        if (type === 'breastfeeding' || type === 'bottle') {
+          return 'feeding';
+        }
+
+        return type;
+      };
+
+      const mergedStats = Object.entries(stats).reduce((acc, [type, data]) => {
+        const statKey = mergeTypeToStatKey(type);
+        if (!acc[statKey]) {
+          acc[statKey] = { count: 0, totalDuration: 0 };
+        }
+
+        acc[statKey].count += data.count;
+        acc[statKey].totalDuration += data.totalDuration;
+        return acc;
+      }, {});
+
       return Object.fromEntries(
-        Object.entries(stats).map(([type, data]) => [
+        Object.entries(mergedStats).map(([type, data]) => [
           type,
           {
             ...data,
+            avgCountPerWeek: data.count,
             avgCountPerDay: data.count / 7,
             avgDurationPerDay: data.totalDuration / 7,
+            avgDurationPerWeek: data.totalDuration,
           },
         ])
       );
@@ -3220,6 +3270,33 @@ const ActivityTracker = () => {
     };
 
     const weekStats = getWeekStats();
+    const statsActivityTypes = {
+      feeding: { icon: Baby, label: 'Кормление', color: 'bg-violet-100 text-violet-700' },
+      sleep: activityTypes.sleep,
+      bath: activityTypes.bath,
+      walk: activityTypes.walk,
+      activity: activityTypes.activity,
+      custom: activityTypes.custom,
+      burp: activityTypes.burp,
+      diaper: activityTypes.diaper,
+      medicine: activityTypes.medicine,
+    };
+
+    const formatAverageCountLabel = (data) => {
+      if (data.avgCountPerDay >= 1) {
+        return `${formatAverageCount(data.avgCountPerDay)} раз/день`;
+      }
+
+      return `${formatAverageCount(data.avgCountPerWeek)} раз/неделю`;
+    };
+
+    const formatAverageDurationLabel = (data) => {
+      if (data.avgCountPerDay >= 1) {
+        return formatDuration(0, data.avgDurationPerDay);
+      }
+
+      return formatDuration(0, data.avgDurationPerWeek);
+    };
 
     return (
       <>
@@ -3230,22 +3307,23 @@ const ActivityTracker = () => {
             </div>
 
             <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
-              <h3 className="text-sm font-semibold mb-3 text-gray-700">Средние дневные показатели за неделю</h3>
+              <h3 className="text-sm font-semibold mb-3 text-gray-700">Средние показатели за неделю</h3>
               {Object.keys(weekStats).length > 0 ? (
                 <div className="space-y-3">
                   {Object.entries(weekStats).map(([type, data]) => {
-                    const ActivityIcon = activityTypes[type]?.icon;
-                    const duration = formatDuration(0, data.avgDurationPerDay);
+                    const ActivityIcon = statsActivityTypes[type]?.icon;
+                    const duration = formatAverageDurationLabel(data);
+                    const durationPeriodLabel = data.avgCountPerDay >= 1 ? '/день' : '/неделю';
                     return (
-                      <div key={type} className={`${activityTypes[type]?.color} rounded-lg p-3`}>
+                      <div key={type} className={`${statsActivityTypes[type]?.color} rounded-lg p-3`}>
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
-                            <span className="font-semibold">{activityTypes[type]?.label}</span>
+                            <span className="font-semibold">{statsActivityTypes[type]?.label}</span>
                           </div>
                           <div className="text-right">
-                            <div className="font-semibold">{formatAverageCount(data.avgCountPerDay)} раз/день</div>
-                            {duration && <div className="text-sm opacity-75">{duration}/день</div>}
+                            <div className="font-semibold">{formatAverageCountLabel(data)}</div>
+                            {duration && <div className="text-sm opacity-75">{duration}{durationPeriodLabel}</div>}
                           </div>
                         </div>
                       </div>
@@ -3260,7 +3338,7 @@ const ActivityTracker = () => {
             <div className="bg-white rounded-2xl shadow-lg p-4">
               <h3 className="text-sm font-semibold mb-3 text-gray-700">Разделы по активностям</h3>
               <div className="space-y-2">
-                {Object.entries(activityTypes).map(([type, data]) => {
+                {Object.entries(statsActivityTypes).map(([type, data]) => {
                   const Icon = data.icon;
                   return (
                     <button
@@ -3291,7 +3369,13 @@ const ActivityTracker = () => {
   }
 
   if (view === 'stats-activity-detail') {
-    const activityMeta = selectedStatsActivityType ? activityTypes[selectedStatsActivityType] : null;
+    const activityMeta = selectedStatsActivityType
+      ? (
+        selectedStatsActivityType === 'feeding'
+          ? { icon: Baby, label: 'Кормление', color: 'bg-violet-100 text-violet-700' }
+          : activityTypes[selectedStatsActivityType]
+      )
+      : null;
 
     return (
       <>
