@@ -112,12 +112,20 @@ class SupabaseService {
   }
 
   /**
-   * Инвалидация всего кеша таблицы
+   * Инвалидация всего кеша таблицы (публичный метод)
    */
-  async _invalidateTableCache(table) {
+  async invalidateTableCache(table) {
     // Используем оптимизированный метод clearByPrefix
     const count = await cacheService.clearByPrefix(table);
     console.log(`🗑️ Invalidated ${count} cache entries for table: ${table}`);
+    return count;
+  }
+  
+  /**
+   * Инвалидация всего кеша таблицы (приватный метод для обратной совместимости)
+   */
+  async _invalidateTableCache(table) {
+    return this.invalidateTableCache(table);
   }
 }
 

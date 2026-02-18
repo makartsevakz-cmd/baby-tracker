@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
 import { Baby, Milk, Moon, Bath, Wind, Droplets, Pill, BarChart3, ArrowLeft, Play, Pause, Edit2, Trash2, X, Bell, Activity, Undo2, Home, History, ChevronRight, Settings as SettingsIcon } from 'lucide-react';
 import * as supabaseModule from './utils/supabase.js';
+import ENV from './config/environment';
 import cacheService, { CACHE_TTL_SECONDS } from './services/cacheService.js';
 import supabaseService from './services/supabaseService.js';
 import notificationService from './services/notificationService.js';
@@ -47,6 +48,7 @@ const ActivityTracker = () => {
   const [editingId, setEditingId] = useState(null);
   const [tg, setTg] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isInitializing, setIsInitializing] = useState(true); // 🔧 ИСПРАВЛЕНИЕ: Флаг инициализации для блокировки автосохранения
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0);
   const [historyTab, setHistoryTab] = useState('list');
   const [historyVisibleDayCount, setHistoryVisibleDayCount] = useState(7);
@@ -330,6 +332,7 @@ const ActivityTracker = () => {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setIsInitializing(true); // 🔧 ИСПРАВЛЕНИЕ: Блокируем автосохранение на время загрузки
     setAuthError(null);
     setIsOnboardingStatusResolved(false);
     
@@ -548,6 +551,9 @@ const ActivityTracker = () => {
           if (savedPaused) setPausedTimers(savedPaused);
           if (savedTimerMeta) setTimerMeta(savedTimerMeta);
 
+          // 🔧 ИСПРАВЛЕНИЕ: Снимаем флаг ПОСЛЕ загрузки таймеров
+          setIsInitializing(false);
+
           await notificationService.initialize();
 
           if (!initialData?.profile?.data) {
@@ -609,6 +615,7 @@ const ActivityTracker = () => {
     } finally {
       clearTimeout(loadTimeout);
       setIsLoading(false);
+      setIsInitializing(false);
     }
   }, [loadFromCache]);
 
@@ -1047,21 +1054,25 @@ const ActivityTracker = () => {
           if (error) throw error;
           
           const updatedActivity = convertFromSupabaseActivity(data);
-          setActivities(prev => prev.map(a => a.id === editingId ? updatedActivity : a));
-          
-          // Обновляем кеш
-          const updatedActivities = activities.map(a => a.id === editingId ? updatedActivity : a);
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+          // 🔧 ИСПРАВЛЕНИЕ: Обновляем state и инвалидируем кеш
+          setActivities(prev => {
+            const updatedActivities = prev.map(a => a.id === editingId ? updatedActivity : a);
+            // Инвалидируем кеш supabaseService
+            supabaseService.invalidateTableCache('activities').catch(console.error);
+            return updatedActivities;
+          });
         } else {
           const { data, error } = await supabaseModule.activityHelpers.createActivity(supabaseData);
           if (error) throw error;
           
           const newActivity = convertFromSupabaseActivity(data);
-          setActivities(prev => [newActivity, ...prev]);
-          
-          // Обновляем кеш для offline-режима
-          const updatedActivities = [newActivity, ...activities];
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
+          // 🔧 ИСПРАВЛЕНИЕ: Обновляем state и инвалидируем кеш
+          setActivities(prev => {
+            const updatedActivities = [newActivity, ...prev];
+            // Инвалидируем кеш supabaseService для таблицы activities
+            supabaseService.invalidateTableCache('activities').catch(console.error);
+            return updatedActivities;
+          });
         }
       } else {
         // Fallback to cache
@@ -1097,14 +1108,15 @@ const ActivityTracker = () => {
         if (isAuthenticated) {
           const { error } = await supabaseModule.activityHelpers.deleteActivity(id);
           if (error) throw error;
-          
-          // Обновляем кеш после удаления
-          const updatedActivities = activities.filter(a => a.id !== id);
-          await cacheService.set('baby_activities', updatedActivities, CACHE_TTL_SECONDS);
-        } else {
-          await cacheService.set('baby_activities', activities.filter(a => a.id !== id), CACHE_TTL_SECONDS);
         }
-        setActivities(prev => prev.filter(a => a.id !== id));
+        
+        // 🔧 ИСПРАВЛЕНИЕ: Обновляем state и инвалидируем кеш
+        setActivities(prev => {
+          const updatedActivities = prev.filter(a => a.id !== id);
+          // Инвалидируем кеш supabaseService
+          supabaseService.invalidateTableCache('activities').catch(console.error);
+          return updatedActivities;
+        });
       } catch (error) {
         console.error('Delete activity error:', error);
         alert('Ошибка удаления активности');
@@ -1229,23 +1241,34 @@ const ActivityTracker = () => {
   );
 
   useEffect(() => {
-    if (!isLoading) {
+    // 🔧 ИСПРАВЛЕНИЕ: Не сохраняем во время инициализации, чтобы избежать race condition
+    if (!isLoading && !isInitializing) {
       // Throttled save - раз в 10 секунд вместо каждую секунду
       saveTimersToCache(timers, pausedTimers, timerMeta);
     }
-  }, [timers, pausedTimers, timerMeta, isLoading, saveTimersToCache]);
+  }, [timers, pausedTimers, timerMeta, isLoading, isInitializing, saveTimersToCache]);
 
   // Сохраняем при размонтировании компонента (важно!)
   useEffect(() => {
+    // 🔧 ИСПРАВЛЕНИЕ: Используем ref для хранения актуальных значений
+    const timersRef = { current: timers };
+    const pausedTimersRef = { current: pausedTimers };
+    const timerMetaRef = { current: timerMeta };
+    
+    // Обновляем ref при каждом рендере
+    timersRef.current = timers;
+    pausedTimersRef.current = pausedTimers;
+    timerMetaRef.current = timerMeta;
+    
     return () => {
-      // Force save on unmount
+      // Force save on unmount - используем АКТУАЛЬНЫЕ значения из ref
       Promise.all([
-        cacheService.set('active_timers', timers, CACHE_TTL_SECONDS),
-        cacheService.set('paused_timers', pausedTimers, CACHE_TTL_SECONDS),
-        cacheService.set('timer_meta', timerMeta, CACHE_TTL_SECONDS),
+        cacheService.set('active_timers', timersRef.current, CACHE_TTL_SECONDS),
+        cacheService.set('paused_timers', pausedTimersRef.current, CACHE_TTL_SECONDS),
+        cacheService.set('timer_meta', timerMetaRef.current, CACHE_TTL_SECONDS),
       ]);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [timers, pausedTimers, timerMeta]);
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);
@@ -3320,6 +3343,30 @@ const ActivityTracker = () => {
 
   return (
     <>
+{ENV.isDevelopment && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          background: 'linear-gradient(135deg, #ff6b00 0%, #ff8c00 100%)',
+          color: 'white',
+          padding: '10px 16px',
+          textAlign: 'center',
+          zIndex: 99999,
+          fontSize: '13px',
+          fontWeight: '600',
+          boxShadow: '0 2px 8px rgba(255, 107, 0, 0.3)',
+          borderBottom: '2px solid #ff8c00'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '18px' }}>🔧</span>
+            <span>DEVELOPMENT MODE - используйте dev-test-1@example.com</span>
+            <span style={{ fontSize: '18px' }}>🔧</span>
+          </div>
+        </div>
+      )}
+          
       <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-28">
       <div className="max-w-2xl mx-auto p-4">
         {/* Header */}
