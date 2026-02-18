@@ -648,12 +648,7 @@ const ActivityTracker = () => {
   }, [activities, getActivityChronologyTime]);
 
   const recentCompletedActivities = useMemo(() => {
-    const instantActivityTypes = new Set(['bath', 'diaper', 'medicine', 'burp']);
-
-    return activitiesByChronology.filter((activity) => {
-      if (activity.endTime) return true;
-      return instantActivityTypes.has(activity.type) && Boolean(activity.startTime);
-    });
+    return activitiesByChronology.filter((activity) => Boolean(activity.endTime));
   }, [activitiesByChronology]);
 
   const filteredHistoryActivities = useMemo(() => {
@@ -1058,11 +1053,13 @@ const ActivityTracker = () => {
         activityData.endTime = activityData.startTime;
       }
     } else if (formData.type === 'burp') {
-      activityData.endTime = null;
+      activityData.endTime = activityData.startTime;
       activityData.foodType = null;
       activityData.diaperType = null;
       activityData.medicineName = null;
-    } else if (!['bath', 'diaper', 'medicine', 'burp'].includes(formData.type) && !activityData.endTime) {
+    } else if (['bath', 'diaper', 'medicine'].includes(formData.type) && !activityData.endTime) {
+      activityData.endTime = activityData.startTime;
+    } else if (!activityData.endTime) {
       activityData.endTime = new Date().toISOString();
     }
 
