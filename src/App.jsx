@@ -15,14 +15,28 @@ const ONBOARDING_COMPLETED_KEY = 'onboarding_completed';
 // Debounce helper для throttling
 function debounce(func, wait) {
   let timeout;
-  return function executedFunction(...args) {
+
+  const debounced = function executedFunction(...args) {
     const later = () => {
-      clearTimeout(timeout);
+      timeout = null;
       func(...args);
     };
-    clearTimeout(timeout);
+
+    if (timeout) {
+      clearTimeout(timeout);
+    }
+
     timeout = setTimeout(later, wait);
   };
+
+  debounced.cancel = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = null;
+    }
+  };
+
+  return debounced;
 }
 
 const buildUserNamespace = (user, telegramUser) => {
@@ -77,6 +91,9 @@ const ActivityTracker = () => {
   const [isOnboardingCompleted, setIsOnboardingCompleted] = useState(false);
   const [isOnboardingStatusResolved, setIsOnboardingStatusResolved] = useState(false);
   const activeNamespaceRef = useRef('global');
+  const timersRef = useRef({});
+  const pausedTimersRef = useRef({});
+  const timerMetaRef = useRef({});
   const historyLoadTriggerRef = useRef(null);
   // НОВЫЕ СОСТОЯНИЯ ДЛЯ АВТОРИЗАЦИИ
   const [needsAuth, setNeedsAuth] = useState(false);
@@ -1228,19 +1245,29 @@ const ActivityTracker = () => {
     };
   }, [view, tg, handleBack, saveActivity, editingId, isSaving]);
 
+  const saveTimersImmediately = useCallback((timersData, pausedData, metaData) => {
+    Promise.all([
+      cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
+      cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
+      cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
+    ]).catch(error => {
+      console.error('Failed to persist timers:', error);
+    });
+  }, []);
+
   // Throttled cache save для таймеров - сохраняем раз в 10 секунд вместо каждую секунду
-  const saveTimersToCache = useCallback(
-    debounce((timersData, pausedData, metaData) => {
-      Promise.all([
-        cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
-        cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
-        cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
-      ]);
-    }, 10000), // Сохраняем раз в 10 секунд
-    []
+  const saveTimersToCache = useMemo(
+    () => debounce((timersData, pausedData, metaData) => {
+      saveTimersImmediately(timersData, pausedData, metaData);
+    }, 10000),
+    [saveTimersImmediately]
   );
 
   useEffect(() => {
+    timersRef.current = timers;
+    pausedTimersRef.current = pausedTimers;
+    timerMetaRef.current = timerMeta;
+
     // 🔧 ИСПРАВЛЕНИЕ: Не сохраняем во время инициализации, чтобы избежать race condition
     if (!isLoading && !isInitializing) {
       // Throttled save - раз в 10 секунд вместо каждую секунду
@@ -1248,27 +1275,26 @@ const ActivityTracker = () => {
     }
   }, [timers, pausedTimers, timerMeta, isLoading, isInitializing, saveTimersToCache]);
 
-  // Сохраняем при размонтировании компонента (важно!)
+  // Сохраняем при закрытии/рефреше страницы и размонтировании компонента (важно!)
   useEffect(() => {
-    // 🔧 ИСПРАВЛЕНИЕ: Используем ref для хранения актуальных значений
-    const timersRef = { current: timers };
-    const pausedTimersRef = { current: pausedTimers };
-    const timerMetaRef = { current: timerMeta };
-    
-    // Обновляем ref при каждом рендере
-    timersRef.current = timers;
-    pausedTimersRef.current = pausedTimers;
-    timerMetaRef.current = timerMeta;
-    
-    return () => {
-      // Force save on unmount - используем АКТУАЛЬНЫЕ значения из ref
-      Promise.all([
-        cacheService.set('active_timers', timersRef.current, CACHE_TTL_SECONDS),
-        cacheService.set('paused_timers', pausedTimersRef.current, CACHE_TTL_SECONDS),
-        cacheService.set('timer_meta', timerMetaRef.current, CACHE_TTL_SECONDS),
-      ]);
+    const persistTimersSnapshot = () => {
+      saveTimersImmediately(timersRef.current, pausedTimersRef.current, timerMetaRef.current);
     };
-  }, [timers, pausedTimers, timerMeta]);
+
+    const handlePageHide = () => {
+      saveTimersToCache.cancel?.();
+      persistTimersSnapshot();
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    window.addEventListener('beforeunload', handlePageHide);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      window.removeEventListener('beforeunload', handlePageHide);
+      handlePageHide();
+    };
+  }, [saveTimersImmediately, saveTimersToCache]);
 
   useEffect(() => {
     const interval = setInterval(() => setTimers(prev => ({ ...prev })), 1000);
