@@ -151,8 +151,10 @@ const FeedingTimeHistogram = ({ rows }) => {
             <span>ГВ: {row.breastfeeding} · Бутылочка: {row.bottle}</span>
           </div>
           <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
-            <div className="h-full bg-pink-300" style={{ width: `${(row.breastfeeding / maxValue) * 100}%` }} />
-            <div className="h-full bg-sky-300" style={{ width: `${(row.bottle / maxValue) * 100}%` }} />
+            <div className="h-full flex" style={{ width: `${(row.total / maxValue) * 100}%` }}>
+              <div className="h-full bg-pink-300" style={{ width: `${row.total ? (row.breastfeeding / row.total) * 100 : 0}%` }} />
+              <div className="h-full bg-sky-300" style={{ width: `${row.total ? (row.bottle / row.total) * 100 : 0}%` }} />
+            </div>
           </div>
         </div>
       ))}
@@ -161,7 +163,7 @@ const FeedingTimeHistogram = ({ rows }) => {
 };
 
 const BottleByDayChart = ({ data }) => {
-  const maxValue = Math.max(1, ...data.map((row) => row.total));
+  const maxValue = Math.max(1, ...data.map((row) => row.bottle));
 
   return (
     <div className="space-y-3">
@@ -169,7 +171,7 @@ const BottleByDayChart = ({ data }) => {
         <div key={row.day}>
           <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
             <span>{formatDayLabel(row.day)}</span>
-            <span>{Math.round(row.total || 0)} мл</span>
+            <span>{Math.round(row.bottle || 0)} мл</span>
           </div>
           <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
             <div className="h-full bg-blue-300" style={{ width: `${((row.formula || 0) / maxValue) * 100}%` }} />
@@ -226,8 +228,8 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
       if (!dayMap[day]) return;
 
       if (item.type === 'breastfeeding') {
-        dayMap[day].left += Number(item.leftDuration) || 0;
-        dayMap[day].right += Number(item.rightDuration) || 0;
+        dayMap[day].left += (Number(item.leftDuration) || 0) / 60;
+        dayMap[day].right += (Number(item.rightDuration) || 0) / 60;
         dayMap[day].feedCount += 1;
       }
 
@@ -250,7 +252,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
       .map((item) => {
         const start = new Date(item.startTime).getTime();
         const fallbackEnd = item.type === 'breastfeeding'
-          ? start + ((Number(item.leftDuration) || 0) + (Number(item.rightDuration) || 0)) * 60000
+          ? start + ((Number(item.leftDuration) || 0) + (Number(item.rightDuration) || 0)) * 1000
           : start;
         const end = item.endTime ? new Date(item.endTime).getTime() : fallbackEnd;
 
@@ -301,7 +303,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
         hours[hour].total = hours[hour].breastfeeding + hours[hour].bottle;
       });
 
-    return hours;
+    return hours.filter((item) => item.total > 0);
   }, [scopedActivities]);
 
   const sleepByDay = useMemo(() => {
@@ -403,18 +405,6 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
           />
         </StatsCard>
 
-        <StatsCard title="Среднее количество кормлений в день">
-          <MetricPill label="Среднее значение" value={`${averageFeedsPerDay.toFixed(1)} раз/день`} color="bg-violet-50 text-violet-700" />
-        </StatsCard>
-
-        <StatsCard title="Кормление грудью: минуты по дням (левая/правая)">
-          {feedingData.some((item) => item.left || item.right) ? (
-            <DailyBarChart data={feedingData} leftKey="left" rightKey="right" leftColor="bg-pink-300" rightColor="bg-fuchsia-400" unit="мин" />
-          ) : (
-            <EmptyState text="За 7 дней нет записей кормления грудью." />
-          )}
-        </StatsCard>
-
         <StatsCard title="Интервалы между кормлениями">
           {feedingData.some((item) => item.feedCount) ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -424,6 +414,18 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
             </div>
           ) : (
             <EmptyState text="Недостаточно данных, чтобы вычислить интервалы." />
+          )}
+        </StatsCard>
+
+        <StatsCard title="Среднее количество кормлений в день">
+          <MetricPill label="Среднее значение" value={`${Math.round(averageFeedsPerDay)} раз/день`} color="bg-violet-50 text-violet-700" />
+        </StatsCard>
+
+        <StatsCard title="Кормление грудью: минуты по дням (левая/правая)">
+          {feedingData.some((item) => item.left || item.right) ? (
+            <DailyBarChart data={feedingData} leftKey="left" rightKey="right" leftColor="bg-pink-300" rightColor="bg-fuchsia-400" unit="мин" />
+          ) : (
+            <EmptyState text="За 7 дней нет записей кормления грудью." />
           )}
         </StatsCard>
 

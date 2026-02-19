@@ -3191,8 +3191,8 @@ const ActivityTracker = () => {
       if (!activity.startTime || activity.startTime.slice(0, 10) !== todayDate) return acc;
       if (activity.type === 'breastfeeding') {
         acc.count += 1;
-        acc.left += Number(activity.leftDuration) || 0;
-        acc.right += Number(activity.rightDuration) || 0;
+        acc.left += (Number(activity.leftDuration) || 0) / 60;
+        acc.right += (Number(activity.rightDuration) || 0) / 60;
       }
       if (activity.type === 'bottle') {
         acc.count += 1;
@@ -3369,7 +3369,6 @@ const ActivityTracker = () => {
               </button>
               <div>
                 <h2 className="text-xl font-semibold">{activityMeta?.label || 'Раздел активности'}</h2>
-                <p className="text-sm text-gray-500">Здесь скоро появится детальная аналитика.</p>
               </div>
             </div>
 
