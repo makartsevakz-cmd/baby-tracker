@@ -269,7 +269,7 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
     return periodDays.map((day) => dayMap[day]);
   }, [periodDays, scopedActivities]);
 
-  if (selectedType === 'breastfeeding' || selectedType === 'bottle') {
+  if (selectedType === 'breastfeeding' || selectedType === 'bottle' || selectedType === 'feeding') {
     return (
       <div className="space-y-4">
         <StatsCard title="Кормление грудью: минуты по дням (левая/правая)">

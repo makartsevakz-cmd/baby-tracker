@@ -1,5 +1,5 @@
 // src/components/NotificationsView.jsx
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Bell, Plus, Edit2, Trash2, Clock, Calendar, RefreshCw, ArrowLeft, X } from 'lucide-react';
 import cacheService, { CACHE_TTL_SECONDS } from '../services/cacheService.js';
 import { Platform } from '../utils/platform.js';
@@ -56,11 +56,12 @@ const NotificationsView = ({
     ];
 
   const [notifications, setNotifications] = useState(initialNotifications);
-  const [isLoading, setIsLoading] = useState(!initialNotifications.length);
+  const [isLoading, setIsLoading] = useState(!initialNotifications.length && Boolean(notificationHelpers));
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [isSaving, setIsSaving] = useState(false); // Prevent double saves
   const [formData, setFormData] = useState(() => getDefaultFormData());
+  const hasLoadedFromServerRef = useRef(false);
 
   const loadNotifications = async () => {
     // Если уже есть данные из props - не показываем loader
@@ -100,11 +101,19 @@ const NotificationsView = ({
     if (initialNotifications.length > 0) {
       setNotifications(initialNotifications);
       setIsLoading(false);
-    } else if (notificationHelpers) {
-      // Загружаем только если нет данных в props
-      loadNotifications();
+      return;
     }
-  }, [isAuthenticated, notificationHelpers, initialNotifications]);
+
+    if (notificationHelpers && !hasLoadedFromServerRef.current) {
+      // При пустом списке и активном helper загружаем только один раз,
+      // чтобы избежать бесконечного цикла запросов при 0 уведомлений.
+      hasLoadedFromServerRef.current = true;
+      loadNotifications();
+      return;
+    }
+
+    setIsLoading(false);
+  }, [notificationHelpers, initialNotifications.length]);
 
   // ── Конвертация локальное ↔ UTC ──────────────────────────────────────────
   const localTimeToUTC = (localHHMM) => {
