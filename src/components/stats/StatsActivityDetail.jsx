@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -114,22 +114,104 @@ const SleepTimeline = ({ sessions }) => (
   </div>
 );
 
-const buildPeriodDays = (daysCount = 7) => {
-  const days = [];
-  const now = new Date();
-  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-  for (let i = daysCount - 1; i >= 0; i--) {
-    days.push(toDayKey(new Date(todayStart.getTime() - i * DAY_MS)));
-  }
+const getMonday = (dateLike = new Date()) => {
+  const date = new Date(dateLike);
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  date.setDate(date.getDate() + diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
 
-  return days;
+const mondayDateInputMin = '1970-01-05';
+
+const toDateInputValue = (dateLike) => {
+  const date = new Date(dateLike);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+};
+
+const formatInterval = (minutes) => {
+  if (minutes === null || minutes === undefined) return '—';
+  return formatMinutes(minutes);
+};
+
+const FeedingTimeHistogram = ({ rows }) => {
+  const maxValue = Math.max(1, ...rows.map((row) => row.total));
+
+  return (
+    <div className="space-y-2">
+      {rows.map((row) => (
+        <div key={row.hour}>
+          <div className="flex justify-between text-xs text-gray-500 mb-1">
+            <span>{String(row.hour).padStart(2, '0')}:00</span>
+            <span>ГВ: {row.breastfeeding} · Бутылочка: {row.bottle}</span>
+          </div>
+          <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
+            <div className="h-full bg-pink-300" style={{ width: `${(row.breastfeeding / maxValue) * 100}%` }} />
+            <div className="h-full bg-sky-300" style={{ width: `${(row.bottle / maxValue) * 100}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const BottleByDayChart = ({ data }) => {
+  const maxValue = Math.max(1, ...data.map((row) => row.total));
+
+  return (
+    <div className="space-y-3">
+      {data.map((row) => (
+        <div key={row.day}>
+          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+            <span>{formatDayLabel(row.day)}</span>
+            <span>{Math.round(row.total || 0)} мл</span>
+          </div>
+          <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
+            <div className="h-full bg-blue-300" style={{ width: `${((row.formula || 0) / maxValue) * 100}%` }} />
+            <div className="h-full bg-cyan-300" style={{ width: `${((row.water || 0) / maxValue) * 100}%` }} />
+            <div className="h-full bg-violet-300" style={{ width: `${((row.breastMilk || 0) / maxValue) * 100}%` }} />
+          </div>
+          <div className="mt-1 text-[11px] text-gray-500">Смесь: {Math.round(row.formula || 0)} мл · Вода: {Math.round(row.water || 0)} мл · Грудное молоко: {Math.round(row.breastMilk || 0)} мл</div>
+        </div>
+      ))}
+    </div>
+  );
 };
 
 // Вынесенный компонент с метриками, чтобы экран статистики было проще расширять новыми типами.
-const StatsActivityDetail = ({ selectedType, activities }) => {
-  const periodDays = useMemo(() => buildPeriodDays(7), []);
+const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekStartChange }) => {
+  const currentMonday = useMemo(() => getMonday(), []);
+  const selectedMonday = useMemo(() => {
+    const candidate = weekStartDate ? getMonday(weekStartDate) : currentMonday;
+    return candidate > currentMonday ? currentMonday : candidate;
+  }, [weekStartDate, currentMonday]);
+
+  const periodDays = useMemo(() => {
+    return Array.from({ length: 7 }, (_, i) => {
+      const day = new Date(selectedMonday);
+      day.setDate(selectedMonday.getDate() + i);
+      return toDayKey(day);
+    });
+  }, [selectedMonday]);
   const [selectedTimelineDay, setSelectedTimelineDay] = useState(periodDays[periodDays.length - 1]);
+
+  useEffect(() => {
+    if (!periodDays.includes(selectedTimelineDay)) {
+      setSelectedTimelineDay(periodDays[periodDays.length - 1]);
+    }
+  }, [periodDays, selectedTimelineDay]);
+
+
+  const handleWeekChange = (value) => {
+    const monday = getMonday(value);
+    if (monday > currentMonday) return;
+    onWeekStartChange?.(toDateInputValue(monday));
+  };
 
   const scopedActivities = useMemo(
     () => activities.filter((item) => item.startTime && periodDays.includes(toDayKey(item.startTime))),
@@ -137,7 +219,7 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
   );
 
   const feedingData = useMemo(() => {
-    const dayMap = Object.fromEntries(periodDays.map((day) => [day, { day, left: 0, right: 0, bottle: 0 }]));
+    const dayMap = Object.fromEntries(periodDays.map((day) => [day, { day, left: 0, right: 0, bottle: 0, formula: 0, water: 0, breastMilk: 0, feedCount: 0 }]));
 
     scopedActivities.forEach((item) => {
       const day = toDayKey(item.startTime);
@@ -146,10 +228,16 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
       if (item.type === 'breastfeeding') {
         dayMap[day].left += Number(item.leftDuration) || 0;
         dayMap[day].right += Number(item.rightDuration) || 0;
+        dayMap[day].feedCount += 1;
       }
 
       if (item.type === 'bottle') {
-        dayMap[day].bottle += Number(item.amount) || 0;
+        const amount = Number(item.amount) || 0;
+        dayMap[day].bottle += amount;
+        dayMap[day].feedCount += 1;
+        if (item.foodType === 'formula') dayMap[day].formula += amount;
+        if (item.foodType === 'water') dayMap[day].water += amount;
+        if (item.foodType === 'breast_milk') dayMap[day].breastMilk += amount;
       }
     });
 
@@ -166,24 +254,54 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
           : start;
         const end = item.endTime ? new Date(item.endTime).getTime() : fallbackEnd;
 
-        return { start, end };
+        return { start, end, type: item.type };
       })
       .sort((a, b) => a.start - b.start);
 
-    const intervals = [];
+    const computeAverage = (intervals) => {
+      if (!intervals.length) return null;
+      return intervals.reduce((acc, value) => acc + value, 0) / intervals.length;
+    };
+
+    const anyIntervals = [];
+    const breastOnlyIntervals = [];
+    const bottleOnlyIntervals = [];
+
     for (let i = 1; i < feedingEvents.length; i++) {
-      const diffMinutes = (feedingEvents[i].start - feedingEvents[i - 1].end) / 60000;
-      if (diffMinutes >= 0) intervals.push(diffMinutes);
+      const prev = feedingEvents[i - 1];
+      const current = feedingEvents[i];
+      const diffMinutes = (current.start - prev.end) / 60000;
+      if (diffMinutes < 0) continue;
+      anyIntervals.push(diffMinutes);
+      if (prev.type === 'breastfeeding' && current.type === 'breastfeeding') breastOnlyIntervals.push(diffMinutes);
+      if (prev.type === 'bottle' && current.type === 'bottle') bottleOnlyIntervals.push(diffMinutes);
     }
 
-    if (!intervals.length) return null;
-
-    const total = intervals.reduce((acc, value) => acc + value, 0);
     return {
-      avg: total / intervals.length,
-      min: Math.min(...intervals),
-      max: Math.max(...intervals),
+      any: computeAverage(anyIntervals),
+      breastOnly: computeAverage(breastOnlyIntervals),
+      bottleOnly: computeAverage(bottleOnlyIntervals),
     };
+  }, [scopedActivities]);
+
+  const averageFeedsPerDay = useMemo(() => {
+    const total = feedingData.reduce((acc, day) => acc + day.feedCount, 0);
+    return total / 7;
+  }, [feedingData]);
+
+  const feedingByHour = useMemo(() => {
+    const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, breastfeeding: 0, bottle: 0, total: 0 }));
+
+    scopedActivities
+      .filter((item) => item.type === 'breastfeeding' || item.type === 'bottle')
+      .forEach((item) => {
+        const hour = new Date(item.startTime).getHours();
+        if (item.type === 'breastfeeding') hours[hour].breastfeeding += 1;
+        if (item.type === 'bottle') hours[hour].bottle += 1;
+        hours[hour].total = hours[hour].breastfeeding + hours[hour].bottle;
+      });
+
+    return hours;
   }, [scopedActivities]);
 
   const sleepByDay = useMemo(() => {
@@ -272,6 +390,23 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
   if (selectedType === 'breastfeeding' || selectedType === 'bottle' || selectedType === 'feeding') {
     return (
       <div className="space-y-4">
+        <StatsCard title="Период">
+          <div className="text-xs text-gray-500 mb-2">Выберите понедельник недели</div>
+          <input
+            type="date"
+            value={toDateInputValue(selectedMonday)}
+            min={mondayDateInputMin}
+            max={toDateInputValue(currentMonday)}
+            step={7}
+            onChange={(e) => handleWeekChange(e.target.value)}
+            className="w-full rounded-xl border border-violet-100 bg-violet-50 px-3 py-2 text-sm"
+          />
+        </StatsCard>
+
+        <StatsCard title="Среднее количество кормлений в день">
+          <MetricPill label="Среднее значение" value={`${averageFeedsPerDay.toFixed(1)} раз/день`} color="bg-violet-50 text-violet-700" />
+        </StatsCard>
+
         <StatsCard title="Кормление грудью: минуты по дням (левая/правая)">
           {feedingData.some((item) => item.left || item.right) ? (
             <DailyBarChart data={feedingData} leftKey="left" rightKey="right" leftColor="bg-pink-300" rightColor="bg-fuchsia-400" unit="мин" />
@@ -281,20 +416,28 @@ const StatsActivityDetail = ({ selectedType, activities }) => {
         </StatsCard>
 
         <StatsCard title="Интервалы между кормлениями">
-          {feedingIntervals ? (
+          {feedingData.some((item) => item.feedCount) ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-              <MetricPill label="Средний" value={formatMinutes(feedingIntervals.avg)} color="bg-blue-50 text-blue-700" />
-              <MetricPill label="Минимальный" value={formatMinutes(feedingIntervals.min)} color="bg-emerald-50 text-emerald-700" />
-              <MetricPill label="Максимальный" value={formatMinutes(feedingIntervals.max)} color="bg-amber-50 text-amber-700" />
+              <MetricPill label="Любые кормления" value={formatInterval(feedingIntervals.any)} color="bg-blue-50 text-blue-700" />
+              <MetricPill label="Только ГВ подряд" value={formatInterval(feedingIntervals.breastOnly)} color="bg-pink-50 text-pink-700" />
+              <MetricPill label="Только бутылочка подряд" value={formatInterval(feedingIntervals.bottleOnly)} color="bg-cyan-50 text-cyan-700" />
             </div>
           ) : (
             <EmptyState text="Недостаточно данных, чтобы вычислить интервалы." />
           )}
         </StatsCard>
 
+        <StatsCard title="Время суток и частота кормлений (ГВ/бутылочка)">
+          {feedingByHour.some((item) => item.total > 0) ? (
+            <FeedingTimeHistogram rows={feedingByHour} />
+          ) : (
+            <EmptyState text="За выбранную неделю нет записей кормлений." />
+          )}
+        </StatsCard>
+
         <StatsCard title="Бутылочка: объём по дням">
           {feedingData.some((item) => item.bottle) ? (
-            <SingleBarChart data={feedingData} valueKey="bottle" color="bg-sky-300" unit="мл" />
+            <BottleByDayChart data={feedingData} />
           ) : (
             <EmptyState text="За 7 дней нет записей по бутылочке." />
           )}

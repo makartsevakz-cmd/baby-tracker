@@ -78,6 +78,15 @@ const ActivityTracker = () => {
   const [historyFilterStartDate, setHistoryFilterStartDate] = useState('');
   const [historyFilterEndDate, setHistoryFilterEndDate] = useState('');
   const [selectedStatsActivityType, setSelectedStatsActivityType] = useState(null);
+  const [selectedStatsWeekStart, setSelectedStatsWeekStart] = useState(() => {
+    const now = new Date();
+    const day = now.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    const monday = new Date(now);
+    monday.setDate(now.getDate() + diff);
+    monday.setHours(0, 0, 0, 0);
+    return monday.toISOString().slice(0, 10);
+  });
   const [babyProfile, setBabyProfile] = useState({
     name: '',
     birthDate: '',
@@ -754,6 +763,15 @@ const ActivityTracker = () => {
     monday.setDate(now.getDate() + diff + (offset * 7));
     monday.setHours(0, 0, 0, 0);
     return monday;
+  }, []);
+
+  const normalizeMonday = useCallback((dateLike) => {
+    const date = new Date(dateLike);
+    const day = date.getDay();
+    const diff = day === 0 ? -6 : 1 - day;
+    date.setDate(date.getDate() + diff);
+    date.setHours(0, 0, 0, 0);
+    return date;
   }, []);
 
   const loadMoreHistoryDays = useCallback(() => {
@@ -3167,7 +3185,25 @@ const ActivityTracker = () => {
   }
 
   if (view === 'stats') {
-    const weekStart = getWeekStart(selectedWeekOffset);
+    const todayDate = getTodayDateString();
+
+    const feedingTodayStats = activities.reduce((acc, activity) => {
+      if (!activity.startTime || activity.startTime.slice(0, 10) !== todayDate) return acc;
+      if (activity.type === 'breastfeeding') {
+        acc.count += 1;
+        acc.left += Number(activity.leftDuration) || 0;
+        acc.right += Number(activity.rightDuration) || 0;
+      }
+      if (activity.type === 'bottle') {
+        acc.count += 1;
+        acc.bottle += parseInt(activity.amount, 10) || 0;
+      }
+      return acc;
+    }, { count: 0, left: 0, right: 0, bottle: 0 });
+
+    const currentMonday = normalizeMonday(new Date());
+    const selectedStatsMonday = normalizeMonday(selectedStatsWeekStart || currentMonday);
+    const weekStart = selectedStatsMonday > currentMonday ? currentMonday : selectedStatsMonday;
 
     const getWeekStats = () => {
       const weekActivities = activities.filter(a => {
@@ -3248,21 +3284,7 @@ const ActivityTracker = () => {
       return `${formatAverageCount(data.avgCountPerWeek)} раз/неделю`;
     };
 
-    const formatAverageDurationLabel = (data) => {
-      if (data.avgCountPerDay >= 1) {
-        return formatDuration(0, data.avgDurationPerDay);
-      }
 
-      return formatDuration(0, data.avgDurationPerWeek);
-    };
-
-    const formatAverageAmountLabel = (data) => {
-      if (data.avgCountPerDay >= 1) {
-        return `${Math.round(data.avgAmountPerDay)} мл/день`;
-      }
-
-      return `${Math.round(data.avgAmountPerWeek)} мл/неделю`;
-    };
 
     return (
       <>
@@ -3295,12 +3317,15 @@ const ActivityTracker = () => {
                           <div className="font-medium text-gray-800">{data.label}</div>
                           {stat ? (
                             <div className="text-xs text-gray-500">
-                              {formatAverageCountLabel(stat)}
-                              {type === 'feeding' && (
+                              {type === 'feeding' ? (
                                 <>
-                                  {' · ГВ: '}{formatAverageDurationLabel(stat) || '0м'}
-                                  {' · Бутылочка: '}{formatAverageAmountLabel(stat)}
+                                  Сегодня: {feedingTodayStats.count} кормл.
+                                  {' · Л: '}{Math.round(feedingTodayStats.left)} мин
+                                  {' · П: '}{Math.round(feedingTodayStats.right)} мин
+                                  {' · Бутылочка: '}{Math.round(feedingTodayStats.bottle)} мл
                                 </>
+                              ) : (
+                                <>{formatAverageCountLabel(stat)}</>
                               )}
                             </div>
                           ) : (
@@ -3351,6 +3376,8 @@ const ActivityTracker = () => {
             <StatsActivityDetail
               selectedType={selectedStatsActivityType}
               activities={activities}
+              weekStartDate={selectedStatsWeekStart}
+              onWeekStartChange={setSelectedStatsWeekStart}
             />
           </div>
         </div>
