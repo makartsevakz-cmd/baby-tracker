@@ -184,6 +184,31 @@ const ActivityTracker = () => {
     return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
+  const parseDurationInputToSeconds = (value) => {
+    if (!value) return 0;
+
+    const raw = String(value).trim();
+    if (!raw) return 0;
+
+    const parts = raw.split(':').map(part => part.trim());
+    if (parts.some(part => part === '' || Number.isNaN(Number(part)))) {
+      return 0;
+    }
+
+    const normalized = parts.map(part => Math.max(0, parseInt(part, 10) || 0));
+
+    if (normalized.length === 1) {
+      return normalized[0];
+    }
+
+    if (normalized.length === 2) {
+      return normalized[0] * 60 + normalized[1];
+    }
+
+    const [hours, minutes, seconds] = normalized.slice(-3);
+    return (hours * 3600) + (minutes * 60) + seconds;
+  };
+
   const BURP_COMMENT_PREFIX = '[BURP_DATA]';
 
   const serializeBurpComment = (comment, burpData) => {
@@ -986,11 +1011,21 @@ const ActivityTracker = () => {
     }
 
     if ((formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity' || formData.type === 'custom')
-      && formData.timeInputMode !== 'timer') {
+      && formData.type === 'custom') {
       const manualDurationMinutes = Number(formData.manualDurationMinutes);
       if (!Number.isFinite(manualDurationMinutes) || manualDurationMinutes <= 0) {
         if (tg) tg.HapticFeedback?.notificationOccurred('error');
         alert('Укажите длительность активности в минутах');
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    if (formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') {
+      const durationSeconds = getTotalDuration(formData.type) || parseDurationInputToSeconds(formData.elapsedDuration);
+      if (durationSeconds <= 0) {
+        if (tg) tg.HapticFeedback?.notificationOccurred('error');
+        alert('Укажите длительность в формате ЧЧ:ММ:СС');
         setIsSaving(false);
         return;
       }
@@ -1017,15 +1052,13 @@ const ActivityTracker = () => {
     };
 
     if (formData.type === 'breastfeeding') {
-      let leftDuration = formData.manualLeftMinutes ? parseInt(formData.manualLeftMinutes) * 60 : (editingId ? 0 : getTotalDuration('left'));
-      let rightDuration = formData.manualRightMinutes ? parseInt(formData.manualRightMinutes) * 60 : (editingId ? 0 : getTotalDuration('right'));
-      const leftRoundedMinutes = Math.round(leftDuration / 60);
-      const rightRoundedMinutes = Math.round(rightDuration / 60);
-      const totalDuration = (leftRoundedMinutes + rightRoundedMinutes) * 60;
+      const leftDuration = getTotalDuration('left') || parseDurationInputToSeconds(formData.leftElapsedDuration);
+      const rightDuration = getTotalDuration('right') || parseDurationInputToSeconds(formData.rightElapsedDuration);
+      const totalDuration = leftDuration + rightDuration;
       const breastfeedingStartTime = timerMeta.breastfeedingStartTime || formData.startTime;
 
-      activityData.leftDuration = leftRoundedMinutes * 60;
-      activityData.rightDuration = rightRoundedMinutes * 60;
+      activityData.leftDuration = leftDuration;
+      activityData.rightDuration = rightDuration;
       activityData.startTime = breastfeedingStartTime;
       activityData.endTime = new Date(new Date(breastfeedingStartTime).getTime() + totalDuration * 1000).toISOString();
       
@@ -1041,16 +1074,14 @@ const ActivityTracker = () => {
       }
     } else if (formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') {
       const timerKey = formData.type;
-      const isTimerMode = formData.timeInputMode === 'timer';
-      if (!editingId && isTimerMode && (timers[timerKey] || pausedTimers[timerKey])) {
-        const duration = getTotalDuration(timerKey);
-        const timerStartTime = timerMeta[`${timerKey}StartTime`] || formData.startTime;
-        activityData.startTime = timerStartTime;
-        activityData.endTime = new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
+      const hasTimerData = Boolean(timers[timerKey] || pausedTimers[timerKey]);
+      const duration = getTotalDuration(timerKey) || parseDurationInputToSeconds(formData.elapsedDuration);
+      const timerStartTime = hasTimerData ? (timerMeta[`${timerKey}StartTime`] || formData.startTime) : formData.startTime;
+      activityData.startTime = timerStartTime;
+      activityData.endTime = new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
+
+      if (!editingId && hasTimerData) {
         resetTimer(timerKey);
-      } else {
-        const manualDurationMinutes = Math.max(0, Number(formData.manualDurationMinutes) || 0);
-        activityData.endTime = new Date(new Date(activityData.startTime).getTime() + manualDurationMinutes * 60 * 1000).toISOString();
       }
     } else if (formData.type === 'custom') {
       activityData.medicineName = String(formData.medicineName || '').trim();
@@ -1160,10 +1191,14 @@ const ActivityTracker = () => {
       isDurationBasedActivity
         ? {
           ...activity,
-          timeInputMode: activity.type === 'custom' ? 'manual' : (activity.timeInputMode || 'manual'),
+          elapsedDuration: formatSeconds(durationMinutes * 60),
           manualDurationMinutes: durationMinutes,
         }
-        : activity
+        : {
+          ...activity,
+          leftElapsedDuration: formatSeconds(activity.leftDuration || 0),
+          rightElapsedDuration: formatSeconds(activity.rightDuration || 0),
+        }
     );
     setView('add');
   };
@@ -1431,7 +1466,7 @@ const ActivityTracker = () => {
     const baseData = { type, startTime: now, comment: '' };
     
     if (type === 'breastfeeding') {
-      setFormData({ ...baseData, leftDuration: 0, rightDuration: 0, manualLeftMinutes: '', manualRightMinutes: '', timeInputMode: null });
+      setFormData({ ...baseData, leftDuration: 0, rightDuration: 0, leftElapsedDuration: '00:00:00', rightElapsedDuration: '00:00:00' });
     } else if (type === 'bottle') {
       setFormData({ ...baseData, foodType: 'breast_milk', amount: '' });
     } else if (type === 'diaper') {
@@ -1451,7 +1486,7 @@ const ActivityTracker = () => {
     } else {
       setFormData(
         (type === 'sleep' || type === 'walk' || type === 'activity')
-          ? { ...baseData, timeInputMode: null, manualDurationMinutes: '10' }
+          ? { ...baseData, elapsedDuration: '00:00:00' }
           : baseData
       );
     }
@@ -1496,18 +1531,15 @@ const ActivityTracker = () => {
         comment: '',
         leftDuration: getTotalDuration('left'),
         rightDuration: getTotalDuration('right'),
-        manualLeftMinutes: '',
-        manualRightMinutes: '',
-        timeInputMode: 'timer'
+        leftElapsedDuration: formatSeconds(getTotalDuration('left')),
+        rightElapsedDuration: formatSeconds(getTotalDuration('right')),
       });
     } else {
-      const hasTimerData = Boolean(timers[type] || pausedTimers[type]);
       setFormData({ 
         type, 
         startTime,
         comment: '',
-        manualDurationMinutes: '10',
-        timeInputMode: hasTimerData ? 'timer' : null,
+        elapsedDuration: formatSeconds(getTotalDuration(type)),
       });
     }
     
@@ -1764,14 +1796,7 @@ const ActivityTracker = () => {
 
       setTimerMeta(prev => ({
         ...prev,
-        breastfeedingStartTime: prev.breastfeedingStartTime || new Date(now).toISOString()
-      }));
-
-      setFormData(prev => ({
-        ...prev,
-        timeInputMode: 'timer',
-        manualLeftMinutes: '',
-        manualRightMinutes: '',
+        breastfeedingStartTime: prev.breastfeedingStartTime || new Date(now - (Number.isFinite(ownPausedDuration) ? ownPausedDuration : 0)).toISOString()
       }));
 
       return;
@@ -1783,14 +1808,6 @@ const ActivityTracker = () => {
       ...prev,
       [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (Number.isFinite(pausedDuration) ? pausedDuration : 0)).toISOString()
     }));
-
-    if (activityType === 'sleep' || activityType === 'walk' || activityType === 'activity') {
-      setFormData(prev => ({
-        ...prev,
-        timeInputMode: 'timer',
-        endTime: '',
-      }));
-    }
   };
 
   const pauseTimer = (timerType, activityType) => {
@@ -1806,34 +1823,39 @@ const ActivityTracker = () => {
     }
   };
 
-  const handleSleepWalkManualChange = (field, value) => {
-    if (timers[selectedActivity] || pausedTimers[selectedActivity]) {
-      resetTimer(selectedActivity);
-    }
+  const handleElapsedDurationChange = (timerKey, field, value) => {
+    const seconds = parseDurationInputToSeconds(value);
+
+    setTimers(prev => {
+      const next = { ...prev };
+      delete next[timerKey];
+      return next;
+    });
+
+    setPausedTimers(prev => {
+      const next = { ...prev };
+      if (seconds > 0) {
+        next[timerKey] = seconds * 1000;
+      } else {
+        delete next[timerKey];
+      }
+      return next;
+    });
+
+    setTimerMeta(prev => {
+      const metaKey = timerKey === 'left' || timerKey === 'right' ? 'breastfeedingStartTime' : `${timerKey}StartTime`;
+      const next = { ...prev };
+      if (seconds > 0) {
+        next[metaKey] = new Date(Date.now() - seconds * 1000).toISOString();
+      } else {
+        delete next[metaKey];
+      }
+      return next;
+    });
 
     setFormData(prev => ({
       ...prev,
       [field]: value,
-      timeInputMode: 'manual',
-    }));
-  };
-
-  const handleBreastfeedingManualChange = (field, value) => {
-    if (!editingId && (timers.left || timers.right || pausedTimers.left || pausedTimers.right)) {
-      resetTimer('left');
-      resetTimer('right');
-      setTimerMeta(prev => {
-        if (!prev.breastfeedingStartTime) return prev;
-        const updatedMeta = { ...prev };
-        delete updatedMeta.breastfeedingStartTime;
-        return updatedMeta;
-      });
-    }
-
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-      timeInputMode: 'manual',
     }));
   };
 
@@ -2255,75 +2277,39 @@ const ActivityTracker = () => {
             <div className="space-y-4">
               {selectedActivity === 'breastfeeding' && (
                 <div className="space-y-4">
-                  {!editingId && (
-                    <div className="grid grid-cols-2 gap-4">
-                      {['left', 'right'].map(side => (
+                  <div className="grid grid-cols-2 gap-4">
+                    {['left', 'right'].map(side => {
+                      const fieldKey = side === 'left' ? 'leftElapsedDuration' : 'rightElapsedDuration';
+                      return (
                         <div key={side} className="border-2 border-pink-200 rounded-lg p-4">
                           <div className="text-center mb-2 font-medium">{side === 'left' ? 'Левая' : 'Правая'} грудь</div>
-                          <div className="text-2xl font-mono text-center mb-3">
-                            {formatSeconds(getTotalDuration(side))}
-                          </div>
+                          <input
+                            type="text"
+                            className="w-full border border-gray-300 rounded-lg p-2 text-center text-lg font-mono mb-3"
+                            value={timers[side] ? formatSeconds(getTotalDuration(side)) : (formData[fieldKey] || '00:00:00')}
+                            onChange={(e) => handleElapsedDurationChange(side, fieldKey, e.target.value)}
+                            placeholder="00:00:00"
+                          />
                           <button
                             onClick={() => timers[side] ? pauseTimer(side, 'breastfeeding') : startTimer(side, 'breastfeeding')}
-                            disabled={formData.timeInputMode === 'manual' && !timers[side]}
-                            className={`w-full py-2 rounded-lg flex items-center justify-center mb-2 ${
-                              timers[side] ? 'bg-red-500 text-white' : 'bg-pink-500 text-white'
-                            } ${(formData.timeInputMode === 'manual' && !timers[side]) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            className={`w-full py-2 rounded-lg flex items-center justify-center ${timers[side] ? 'bg-red-500 text-white' : 'bg-pink-500 text-white'}`}
                           >
                             {timers[side] ? <><Pause className="w-4 h-4 mr-2" />Стоп</> : <><Play className="w-4 h-4 mr-2" />Старт</>}
                           </button>
-                          <input
-                            type="number"
-                            placeholder="или мин"
-                            className="w-full border border-gray-300 rounded-lg p-2 text-center text-sm disabled:bg-gray-100 disabled:text-gray-500"
-                            disabled={formData.timeInputMode === 'timer'}
-                            value={formData[`manual${side === 'left' ? 'Left' : 'Right'}Minutes`] || ''}
-                            onChange={(e) => handleBreastfeedingManualChange(`manual${side === 'left' ? 'Left' : 'Right'}Minutes`, e.target.value)}
-                          />
                         </div>
-                      ))}
-                    </div>
-                  )}
+                      );
+                    })}
+                  </div>
 
-                  {!editingId && formData.timeInputMode === 'manual' && (
-                    <div className="text-xs text-center text-gray-500">Таймер недоступен при ручном вводе</div>
-                  )}
-                  
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
                     <input
                       type="datetime-local"
-                      className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
                       value={toLocalDateTimeString(formData.startTime)}
-                      disabled={!editingId && formData.timeInputMode === 'timer'}
-                      onChange={(e) => handleBreastfeedingManualChange('startTime', fromLocalDateTimeString(e.target.value))}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
                     />
                   </div>
-                  
-                  {editingId && (
-                    <>
-                      <div>
-                        <label className="block mb-2 font-medium">Левая грудь (минут):</label>
-                        <input
-                          type="number"
-                          className="w-full border-2 border-gray-200 rounded-lg p-3"
-                          value={formData.manualLeftMinutes || Math.floor((formData.leftDuration || 0) / 60)}
-                          onChange={(e) => setFormData(prev => ({ ...prev, manualLeftMinutes: e.target.value }))}
-                          placeholder="Введите минуты"
-                        />
-                      </div>
-                      <div>
-                        <label className="block mb-2 font-medium">Правая грудь (минут):</label>
-                        <input
-                          type="number"
-                          className="w-full border-2 border-gray-200 rounded-lg p-3"
-                          value={formData.manualRightMinutes || Math.floor((formData.rightDuration || 0) / 60)}
-                          onChange={(e) => setFormData(prev => ({ ...prev, manualRightMinutes: e.target.value }))}
-                          placeholder="Введите минуты"
-                        />
-                      </div>
-                    </>
-                  )}
                 </div>
               )}
 
@@ -2355,54 +2341,30 @@ const ActivityTracker = () => {
 
               {(selectedActivity === 'sleep' || selectedActivity === 'walk' || selectedActivity === 'activity') && (
                 <div className="space-y-4">
-                  {(() => {
-                    const isTimerMode = formData.timeInputMode === 'timer';
-                    const isManualMode = formData.timeInputMode === 'manual';
-
-                    return (
-                      <>
                   {!editingId && (
                     <div className="border-2 border-indigo-200 rounded-lg p-4">
-                      <div className="text-2xl font-mono text-center mb-3">
-                        {timers[selectedActivity] ? getTimerDuration(timers[selectedActivity], pausedTimers[selectedActivity]) : formatSeconds(getTotalDuration(selectedActivity))}
-                      </div>
-                      <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} disabled={isManualMode && !timers[selectedActivity]} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'} ${(isManualMode && !timers[selectedActivity]) ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                      <input
+                        type="text"
+                        className="w-full border border-gray-300 rounded-lg p-3 text-center text-2xl font-mono mb-3"
+                        value={timers[selectedActivity] ? formatSeconds(getTotalDuration(selectedActivity)) : (formData.elapsedDuration || '00:00:00')}
+                        onChange={(e) => handleElapsedDurationChange(selectedActivity, 'elapsedDuration', e.target.value)}
+                        placeholder="00:00:00"
+                      />
+                      <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'}`}>
                         {timers[selectedActivity] ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер</>}
                       </button>
-                      {isManualMode && !timers[selectedActivity] && (
-                        <div className="text-xs text-center text-gray-500 mt-2">Таймер недоступен при ручном вводе времени</div>
-                      )}
                     </div>
                   )}
-                  
-                  {!editingId && <div className="text-center text-gray-500">или укажите вручную</div>}
-                  
+
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
-                    <input type="datetime-local" disabled={!editingId && isTimerMode} className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500" value={toLocalDateTimeString(formData.startTime)} onChange={(e) => handleSleepWalkManualChange('startTime', fromLocalDateTimeString(e.target.value))} />
-                  </div>
-                  <div>
-                    <label className="block mb-2 font-medium">Длительность (минуты):</label>
                     <input
-                      type="number"
-                      min="1"
-                      disabled={!editingId && isTimerMode}
-                      className="w-full border-2 border-gray-200 rounded-lg p-3 disabled:bg-gray-100 disabled:text-gray-500"
-                      value={formData.manualDurationMinutes || ''}
-                      onChange={(e) => handleSleepWalkManualChange('manualDurationMinutes', e.target.value)}
-                      placeholder="Например, 45"
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.startTime)}
+                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
                     />
                   </div>
-                  {selectedActivity !== 'activity' && formData.startTime && (
-                    <div className="bg-indigo-50 text-indigo-700 rounded-lg p-3 text-sm">
-                      Длительность: {isTimerMode
-                        ? formatSeconds(getTotalDuration(selectedActivity))
-                        : `${Math.max(0, Number(formData.manualDurationMinutes) || 0)} мин`}
-                    </div>
-                  )}
-                    </>
-                    );
-                  })()}
                 </div>
               )}
 
@@ -3218,7 +3180,7 @@ const ActivityTracker = () => {
       const stats = {};
       weekActivities.forEach(activity => {
         if (!stats[activity.type]) {
-          stats[activity.type] = { count: 0, totalDuration: 0 };
+          stats[activity.type] = { count: 0, totalDuration: 0, totalAmount: 0 };
         }
         stats[activity.type].count++;
 
@@ -3227,26 +3189,25 @@ const ActivityTracker = () => {
         } else if (activity.type === 'breastfeeding') {
           stats[activity.type].totalDuration += (activity.leftDuration + activity.rightDuration) * 1000;
         }
+
+        if (activity.type === 'bottle') {
+          stats[activity.type].totalAmount += parseInt(activity.amount, 10) || 0;
+        }
       });
 
-      const mergeTypeToStatKey = (type) => {
-        if (type === 'breastfeeding' || type === 'bottle') {
-          return 'feeding';
-        }
-
-        return type;
+      const breastfeeding = stats.breastfeeding || { count: 0, totalDuration: 0, totalAmount: 0 };
+      const bottle = stats.bottle || { count: 0, totalDuration: 0, totalAmount: 0 };
+      const mergedStats = {
+        ...stats,
+        feeding: {
+          count: breastfeeding.count + bottle.count,
+          totalDuration: breastfeeding.totalDuration,
+          totalAmount: bottle.totalAmount,
+        },
       };
 
-      const mergedStats = Object.entries(stats).reduce((acc, [type, data]) => {
-        const statKey = mergeTypeToStatKey(type);
-        if (!acc[statKey]) {
-          acc[statKey] = { count: 0, totalDuration: 0 };
-        }
-
-        acc[statKey].count += data.count;
-        acc[statKey].totalDuration += data.totalDuration;
-        return acc;
-      }, {});
+      delete mergedStats.breastfeeding;
+      delete mergedStats.bottle;
 
       return Object.fromEntries(
         Object.entries(mergedStats).map(([type, data]) => [
@@ -3257,17 +3218,14 @@ const ActivityTracker = () => {
             avgCountPerDay: data.count / 7,
             avgDurationPerDay: data.totalDuration / 7,
             avgDurationPerWeek: data.totalDuration,
+            avgAmountPerDay: (data.totalAmount || 0) / 7,
+            avgAmountPerWeek: data.totalAmount || 0,
           },
         ])
       );
     };
 
-    const formatAverageCount = (value) => {
-      const rounded = Math.round(value * 10) / 10;
-      return Number.isInteger(rounded)
-        ? `${rounded}`
-        : rounded.toFixed(1).replace('.', ',');
-    };
+    const formatAverageCount = (value) => `${Math.round(value)}`;
 
     const weekStats = getWeekStats();
     const statsActivityTypes = {
@@ -3298,6 +3256,14 @@ const ActivityTracker = () => {
       return formatDuration(0, data.avgDurationPerWeek);
     };
 
+    const formatAverageAmountLabel = (data) => {
+      if (data.avgCountPerDay >= 1) {
+        return `${Math.round(data.avgAmountPerDay)} мл/день`;
+      }
+
+      return `${Math.round(data.avgAmountPerWeek)} мл/неделю`;
+    };
+
     return (
       <>
         <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 pb-24">
@@ -3306,40 +3272,12 @@ const ActivityTracker = () => {
               <h2 className="text-xl font-semibold">Статистика</h2>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-lg p-4 mb-4">
-              <h3 className="text-sm font-semibold mb-3 text-gray-700">Средние показатели за неделю</h3>
-              {Object.keys(weekStats).length > 0 ? (
-                <div className="space-y-3">
-                  {Object.entries(weekStats).map(([type, data]) => {
-                    const ActivityIcon = statsActivityTypes[type]?.icon;
-                    const duration = formatAverageDurationLabel(data);
-                    const durationPeriodLabel = data.avgCountPerDay >= 1 ? '/день' : '/неделю';
-                    return (
-                      <div key={type} className={`${statsActivityTypes[type]?.color} rounded-lg p-3`}>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {ActivityIcon && <ActivityIcon className="w-5 h-5" />}
-                            <span className="font-semibold">{statsActivityTypes[type]?.label}</span>
-                          </div>
-                          <div className="text-right">
-                            <div className="font-semibold">{formatAverageCountLabel(data)}</div>
-                            {duration && <div className="text-sm opacity-75">{duration}{durationPeriodLabel}</div>}
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="text-center text-gray-500 py-4">На этой неделе нет записей</div>
-              )}
-            </div>
-
             <div className="bg-white rounded-2xl shadow-lg p-4">
-              <h3 className="text-sm font-semibold mb-3 text-gray-700">Разделы по активностям</h3>
+              <h3 className="text-sm font-semibold mb-3 text-gray-700">Разделы по активностям (нажмите для деталей)</h3>
               <div className="space-y-2">
                 {Object.entries(statsActivityTypes).map(([type, data]) => {
                   const Icon = data.icon;
+                  const stat = weekStats[type];
                   return (
                     <button
                       key={type}
@@ -3353,7 +3291,22 @@ const ActivityTracker = () => {
                         <div className={`w-9 h-9 rounded-full flex items-center justify-center ${data.color}`}>
                           <Icon className="w-4 h-4" />
                         </div>
-                        <span className="font-medium text-gray-800">{data.label}</span>
+                        <div className="text-left">
+                          <div className="font-medium text-gray-800">{data.label}</div>
+                          {stat ? (
+                            <div className="text-xs text-gray-500">
+                              {formatAverageCountLabel(stat)}
+                              {type === 'feeding' && (
+                                <>
+                                  {' · ГВ: '}{formatAverageDurationLabel(stat) || '0м'}
+                                  {' · Бутылочка: '}{formatAverageAmountLabel(stat)}
+                                </>
+                              )}
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-400">Нет записей за неделю</div>
+                          )}
+                        </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-gray-400" />
                     </button>
