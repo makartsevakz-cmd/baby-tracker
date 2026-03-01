@@ -458,6 +458,10 @@ const ActivityTracker = () => {
     }
   }, [notificationHelpers]);
 
+  const hasBabyProfile = useMemo(() => {
+    return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
+  }, [babyProfile]);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setIsInitializing(true); // 🔧 ИСПРАВЛЕНИЕ: Блокируем автосохранение на время загрузки
@@ -884,10 +888,6 @@ const ActivityTracker = () => {
   const visibleHistoryDayGroups = useMemo(() => {
     return historyDayGroups.slice(0, historyVisibleDayCount);
   }, [historyDayGroups, historyVisibleDayCount]);
-
-  const hasBabyProfile = useMemo(() => {
-    return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
-  }, [babyProfile]);
 
   const getWeekStart = useCallback((offset = 0) => {
     const now = new Date();
