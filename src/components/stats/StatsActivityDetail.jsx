@@ -45,33 +45,6 @@ const MetricPill = ({ label, value, color = 'bg-purple-50 text-purple-700' }) =>
   </div>
 );
 
-const DailyBarChart = ({ data, leftKey, rightKey, leftColor, rightColor, unit }) => {
-  const maxValue = Math.max(1, ...data.flatMap((row) => [row[leftKey] || 0, row[rightKey] || 0]));
-
-  return (
-    <div className="space-y-3">
-      {data.map((row) => (
-        <div key={row.day}>
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
-            <span>{formatDayLabel(row.day)}</span>
-            <span>
-              {Math.round(row[leftKey] || 0)} / {Math.round(row[rightKey] || 0)} {unit}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="h-3 rounded-full bg-gray-100 overflow-hidden">
-              <div className={`h-full rounded-full ${leftColor}`} style={{ width: `${((row[leftKey] || 0) / maxValue) * 100}%` }} />
-            </div>
-            <div className="h-3 rounded-full bg-gray-100 overflow-hidden">
-              <div className={`h-full rounded-full ${rightColor}`} style={{ width: `${((row[rightKey] || 0) / maxValue) * 100}%` }} />
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-};
-
 const SingleBarChart = ({ data, valueKey, color, unit }) => {
   const maxValue = Math.max(1, ...data.map((row) => row[valueKey] || 0));
 
@@ -139,25 +112,62 @@ const formatInterval = (minutes) => {
   return formatMinutes(minutes);
 };
 
-const FeedingTimeHistogram = ({ rows }) => {
-  const maxValue = Math.max(1, ...rows.map((row) => row.total));
+const WEEK_DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+const getHeatLevel = (count, maxCount) => {
+  if (!count || count <= 0 || maxCount <= 0) return 0;
+  const ratio = count / maxCount;
+  if (ratio <= 0.25) return 1;
+  if (ratio <= 0.5) return 2;
+  if (ratio <= 0.75) return 3;
+  return 4;
+};
+
+const heatLevelClasses = [
+  'bg-orange-50',
+  'bg-orange-100',
+  'bg-orange-200',
+  'bg-orange-300',
+  'bg-orange-500',
+];
+
+const FeedingHeatmap = ({ matrix, maxCount }) => {
+  const hours = Array.from({ length: 24 }, (_, hour) => hour);
 
   return (
-    <div className="space-y-2">
-      {rows.map((row) => (
-        <div key={row.hour}>
-          <div className="flex justify-between text-xs text-gray-500 mb-1">
-            <span>{String(row.hour).padStart(2, '0')}:00</span>
-            <span>ГВ: {row.breastfeeding} · Бутылочка: {row.bottle}</span>
-          </div>
-          <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
-            <div className="h-full flex" style={{ width: `${(row.total / maxValue) * 100}%` }}>
-              <div className="h-full bg-pink-300" style={{ width: `${row.total ? (row.breastfeeding / row.total) * 100 : 0}%` }} />
-              <div className="h-full bg-sky-300" style={{ width: `${row.total ? (row.bottle / row.total) * 100 : 0}%` }} />
+    <div className="overflow-x-auto">
+      <div className="grid min-w-[350px] grid-cols-[34px_repeat(7,minmax(0,1fr))] gap-[3px]">
+        <div />
+        {WEEK_DAYS_SHORT.map((day) => (
+          <div key={day} className="pb-1 text-center text-[11px] font-semibold text-gray-500">{day}</div>
+        ))}
+        {hours.map((hour) => (
+          <React.Fragment key={hour}>
+            <div className="flex items-center justify-end pr-1 text-[10px] font-medium text-gray-400">
+              {hour % 3 === 0 ? `${String(hour).padStart(2, '0')}:00` : ''}
             </div>
-          </div>
-        </div>
-      ))}
+            {WEEK_DAYS_SHORT.map((_, dayIndex) => {
+              const count = matrix[hour][dayIndex];
+              const level = getHeatLevel(count, maxCount);
+
+              return (
+                <div
+                  key={`${hour}-${dayIndex}`}
+                  className={`aspect-square rounded-[5px] ${heatLevelClasses[level]}`}
+                  title={`${WEEK_DAYS_SHORT[dayIndex]}, ${String(hour).padStart(2, '0')}:00 — ${count} кормл.`}
+                />
+              );
+            })}
+          </React.Fragment>
+        ))}
+      </div>
+      <div className="mt-3 flex items-center justify-end gap-1.5 text-[11px] text-gray-400">
+        <span>меньше</span>
+        {heatLevelClasses.map((bgClass, index) => (
+          <div key={index} className={`h-3 w-3 rounded-[3px] ${bgClass}`} />
+        ))}
+        <span>больше</span>
+      </div>
     </div>
   );
 };
@@ -169,18 +179,80 @@ const BottleByDayChart = ({ data }) => {
     <div className="space-y-3">
       {data.map((row) => (
         <div key={row.day}>
-          <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+          <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
             <span>{formatDayLabel(row.day)}</span>
             <span>{Math.round(row.bottle || 0)} мл</span>
           </div>
-          <div className="h-3 rounded-full bg-gray-100 overflow-hidden flex">
-            <div className="h-full bg-blue-300" style={{ width: `${((row.formula || 0) / maxValue) * 100}%` }} />
-            <div className="h-full bg-cyan-300" style={{ width: `${((row.water || 0) / maxValue) * 100}%` }} />
-            <div className="h-full bg-violet-300" style={{ width: `${((row.breastMilk || 0) / maxValue) * 100}%` }} />
+          <div className="flex h-4 overflow-hidden rounded-lg bg-gray-100">
+            <div className="h-full bg-amber-400" style={{ width: `${((row.formula || 0) / maxValue) * 100}%` }} />
+            <div className="h-full bg-pink-400" style={{ width: `${((row.breastMilk || 0) / maxValue) * 100}%` }} />
+            <div className="h-full bg-sky-400" style={{ width: `${((row.water || 0) / maxValue) * 100}%` }} />
           </div>
-          <div className="mt-1 text-[11px] text-gray-500">Смесь: {Math.round(row.formula || 0)} мл · Вода: {Math.round(row.water || 0)} мл · Грудное молоко: {Math.round(row.breastMilk || 0)} мл</div>
+          <div className="mt-1 text-[11px] text-gray-500">
+            Смесь: {Math.round(row.formula || 0)} мл · Грудное молоко: {Math.round(row.breastMilk || 0)} мл · Вода: {Math.round(row.water || 0)} мл
+          </div>
         </div>
       ))}
+      <div className="flex flex-wrap gap-3 border-t border-orange-100 pt-3 text-xs text-gray-500">
+        <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />Смесь</div>
+        <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-pink-400" />Грудное молоко</div>
+        <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-sky-400" />Вода</div>
+      </div>
+    </div>
+  );
+};
+
+const BreastBalanceChart = ({ data }) => {
+  const leftTotal = Math.round(data.reduce((sum, item) => sum + (item.left || 0), 0));
+  const rightTotal = Math.round(data.reduce((sum, item) => sum + (item.right || 0), 0));
+  const total = leftTotal + rightTotal;
+  const leftPct = total ? Math.round((leftTotal / total) * 100) : 50;
+  const rightPct = total ? 100 - leftPct : 50;
+  const maxDaily = Math.max(1, ...data.flatMap((item) => [item.left || 0, item.right || 0]));
+
+  return (
+    <div>
+      <div className="mb-3 grid grid-cols-2 gap-2">
+        <div className="rounded-xl bg-pink-50 p-3 text-center">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-pink-500">Левая</div>
+          <div className="text-2xl font-extrabold leading-none text-pink-500">{leftTotal}</div>
+          <div className="text-xs text-gray-500">мин за неделю</div>
+        </div>
+        <div className="rounded-xl bg-violet-50 p-3 text-center">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-violet-500">Правая</div>
+          <div className="text-2xl font-extrabold leading-none text-violet-500">{rightTotal}</div>
+          <div className="text-xs text-gray-500">мин за неделю</div>
+        </div>
+      </div>
+
+      <div className="mb-1 flex justify-between text-xs text-gray-500">
+        <span>{leftPct}%</span>
+        <span>баланс груди</span>
+        <span>{rightPct}%</span>
+      </div>
+      <div className="mb-4 flex h-2.5 overflow-hidden rounded-full bg-orange-100">
+        <div className="h-full bg-pink-400" style={{ width: `${leftPct}%` }} />
+        <div className="h-full bg-violet-500" style={{ width: `${rightPct}%` }} />
+      </div>
+
+      <div className="space-y-2">
+        {data.map((row) => (
+          <div key={row.day}>
+            <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
+              <span>{formatDayLabel(row.day)}</span>
+              <span>{Math.round(row.left || 0)} / {Math.round(row.right || 0)} мин</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full bg-pink-300" style={{ width: `${((row.left || 0) / maxDaily) * 100}%` }} />
+              </div>
+              <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
+                <div className="h-full rounded-full bg-violet-400" style={{ width: `${((row.right || 0) / maxDaily) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 };
@@ -291,19 +363,22 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
     return total / 7;
   }, [feedingData]);
 
-  const feedingByHour = useMemo(() => {
-    const hours = Array.from({ length: 24 }, (_, hour) => ({ hour, breastfeeding: 0, bottle: 0, total: 0 }));
+  const feedingHeatmap = useMemo(() => {
+    const matrix = Array.from({ length: 24 }, () => Array(7).fill(0));
+    const periodDayIndex = Object.fromEntries(periodDays.map((day, index) => [day, index]));
 
     scopedActivities
       .filter((item) => item.type === 'breastfeeding' || item.type === 'bottle')
       .forEach((item) => {
+        const dayIndex = periodDayIndex[toDayKey(item.startTime)];
+        if (dayIndex === undefined) return;
         const hour = new Date(item.startTime).getHours();
-        if (item.type === 'breastfeeding') hours[hour].breastfeeding += 1;
-        if (item.type === 'bottle') hours[hour].bottle += 1;
-        hours[hour].total = hours[hour].breastfeeding + hours[hour].bottle;
+        matrix[hour][dayIndex] += 1;
       });
 
-    return hours.filter((item) => item.total > 0);
+    const maxCount = matrix.reduce((max, row) => Math.max(max, ...row), 0);
+
+    return { matrix, maxCount };
   }, [scopedActivities]);
 
   const sleepByDay = useMemo(() => {
@@ -421,27 +496,27 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
           <MetricPill label="Среднее значение" value={`${Math.round(averageFeedsPerDay)} раз/день`} color="bg-violet-50 text-violet-700" />
         </StatsCard>
 
-        <StatsCard title="Кормление грудью: минуты по дням (левая/правая)">
-          {feedingData.some((item) => item.left || item.right) ? (
-            <DailyBarChart data={feedingData} leftKey="left" rightKey="right" leftColor="bg-pink-300" rightColor="bg-fuchsia-400" unit="мин" />
-          ) : (
-            <EmptyState text="За 7 дней нет записей кормления грудью." />
-          )}
-        </StatsCard>
-
-        <StatsCard title="Время суток и частота кормлений (ГВ/бутылочка)">
-          {feedingByHour.some((item) => item.total > 0) ? (
-            <FeedingTimeHistogram rows={feedingByHour} />
+        <StatsCard title="Время кормлений по дням">
+          {feedingHeatmap.maxCount > 0 ? (
+            <FeedingHeatmap matrix={feedingHeatmap.matrix} maxCount={feedingHeatmap.maxCount} />
           ) : (
             <EmptyState text="За выбранную неделю нет записей кормлений." />
           )}
         </StatsCard>
 
-        <StatsCard title="Бутылочка: объём по дням">
+        <StatsCard title="Кормление из бутылочки">
           {feedingData.some((item) => item.bottle) ? (
             <BottleByDayChart data={feedingData} />
           ) : (
             <EmptyState text="За 7 дней нет записей по бутылочке." />
+          )}
+        </StatsCard>
+
+        <StatsCard title="Баланс груди">
+          {feedingData.some((item) => item.left || item.right) ? (
+            <BreastBalanceChart data={feedingData} />
+          ) : (
+            <EmptyState text="За 7 дней нет записей кормления грудью." />
           )}
         </StatsCard>
       </div>
