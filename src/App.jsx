@@ -337,6 +337,72 @@ const ActivityTracker = () => {
   };
 
     // В loadFromCache, примерно строка 288
+  const reconstructTimersFromActivities = useCallback((rawActivities = [], existingTimers = {}, existingPaused = {}, existingMeta = {}) => {
+    const hasSavedTimerState = Boolean(
+      (existingTimers && Object.keys(existingTimers).length)
+      || (existingPaused && Object.keys(existingPaused).length)
+      || (existingMeta && Object.keys(existingMeta).length)
+    );
+
+    if (hasSavedTimerState || !Array.isArray(rawActivities) || rawActivities.length === 0) {
+      return null;
+    }
+
+    const reconstructedTimers = {};
+    const reconstructedMeta = {};
+    const latestOpenByType = {};
+
+    rawActivities.forEach((activity) => {
+      if (!activity?.startTime || activity?.endTime) return;
+      const existing = latestOpenByType[activity.type];
+      if (!existing || new Date(activity.startTime).getTime() > new Date(existing.startTime).getTime()) {
+        latestOpenByType[activity.type] = activity;
+      }
+    });
+
+    ['sleep', 'walk', 'activity'].forEach((type) => {
+      const openActivity = latestOpenByType[type];
+      if (!openActivity) return;
+
+      const parsedStart = new Date(openActivity.startTime).getTime();
+      if (!Number.isFinite(parsedStart)) return;
+
+      reconstructedTimers[type] = parsedStart;
+      reconstructedMeta[`${type}StartTime`] = openActivity.startTime;
+      reconstructedMeta[`${type}ActivityId`] = openActivity.id;
+    });
+
+    const openBreastfeeding = latestOpenByType.breastfeeding;
+    if (openBreastfeeding?.startTime) {
+      const parsedStart = new Date(openBreastfeeding.startTime).getTime();
+      if (Number.isFinite(parsedStart)) {
+        const side = String(openBreastfeeding.comment || '').includes('side:right') ? 'right' : 'left';
+        reconstructedTimers[side] = parsedStart;
+        reconstructedMeta.breastfeedingStartTime = openBreastfeeding.startTime;
+        reconstructedMeta.breastfeedingActivityId = openBreastfeeding.id;
+      }
+    }
+
+    if (!Object.keys(reconstructedTimers).length && !Object.keys(reconstructedMeta).length) {
+      return null;
+    }
+
+    return {
+      timers: reconstructedTimers,
+      meta: reconstructedMeta,
+    };
+  }, []);
+
+  const applyReconstructedTimers = useCallback((restored) => {
+    if (!restored) return;
+    if (Object.keys(restored.timers || {}).length > 0) {
+      setTimers(restored.timers);
+    }
+    if (Object.keys(restored.meta || {}).length > 0) {
+      setTimerMeta(restored.meta);
+    }
+  }, []);
+
   const loadFromCache = useCallback(async () => {
     const [savedActivities, savedTimers, savedPaused, savedTimerMeta, savedProfile, savedGrowth] = await Promise.all([
       cacheService.get('baby_activities'),
@@ -351,6 +417,9 @@ const ActivityTracker = () => {
     if (savedTimers) setTimers(savedTimers);
     if (savedPaused) setPausedTimers(savedPaused);
     if (savedTimerMeta) setTimerMeta(savedTimerMeta);
+
+    const restored = reconstructTimersFromActivities(savedActivities, savedTimers, savedPaused, savedTimerMeta);
+    applyReconstructedTimers(restored);
     
     // ⬇️ ДОБАВИТЬ ПРОВЕРКУ
     if (savedProfile) {
@@ -363,7 +432,7 @@ const ActivityTracker = () => {
     }
     
     if (savedGrowth) setGrowthData(savedGrowth);
-  }, []);
+  }, [applyReconstructedTimers, reconstructTimersFromActivities]);
 
   const preloadNotifications = useCallback(async () => {
     try {
@@ -388,6 +457,10 @@ const ActivityTracker = () => {
       // Не критично - просто не предзагружаем
     }
   }, [notificationHelpers]);
+
+  const hasBabyProfile = useMemo(() => {
+    return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
+  }, [babyProfile]);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -535,7 +608,7 @@ const ActivityTracker = () => {
 
             if (babyId) {
               // Загружаем данные с кешированием
-              const [profileResult, activitiesResult, growthResult] = await Promise.all([
+              const [profileResult, activitiesResult, growthResult, openTimersResult] = await Promise.all([
                 supabaseService.getWithCache('babies', { 
                   eq: { user_id: currentUser.id } 
                 }, 3600), // TTL 1 час для профиля
@@ -549,12 +622,31 @@ const ActivityTracker = () => {
                 supabaseService.getWithCache('growth_records', { 
                   eq: { baby_id: babyId },
                   order: { column: 'measurement_date', ascending: false }
-                }, 3600) // TTL 1 час для роста
+                }, 3600), // TTL 1 час для роста
+
+                // Важно: отдельно получаем все открытые таймеры без лимита,
+                // чтобы длинные активности не терялись из-за limit:100.
+                supabaseModule.supabase
+                  .from('activities')
+                  .select('*')
+                  .eq('baby_id', babyId)
+                  .is('end_time', null)
+                  .in('type', ['breastfeeding', 'sleep', 'walk', 'activity'])
+                  .order('start_time', { ascending: false })
               ]);
+
+              const mergedActivities = [
+                ...(activitiesResult.data || []),
+                ...(openTimersResult.data || []),
+              ];
+
+              const dedupedActivities = Array.from(
+                new Map(mergedActivities.map((row) => [row.id, row])).values()
+              );
 
               initialData = {
                 profile: { data: profileResult.data?.[0] || null },
-                activities: { data: activitiesResult.data || [] },
+                activities: { data: dedupedActivities },
                 growth: { data: growthResult.data || [] }
               };
             } else {
@@ -590,7 +682,17 @@ const ActivityTracker = () => {
             }
 
             if (initialData.activities?.data) {
-              setActivities(initialData.activities.data.map(convertFromSupabaseActivity));
+              const normalizedActivities = initialData.activities.data.map(convertFromSupabaseActivity);
+              setActivities(normalizedActivities);
+
+              const [savedTimers, savedPaused, savedTimerMeta] = await Promise.all([
+                cacheService.get('active_timers'),
+                cacheService.get('paused_timers'),
+                cacheService.get('timer_meta')
+              ]);
+
+              const restored = reconstructTimersFromActivities(normalizedActivities, savedTimers, savedPaused, savedTimerMeta);
+              applyReconstructedTimers(restored);
             }
 
             if (initialData.growth?.data) {
@@ -676,7 +778,43 @@ const ActivityTracker = () => {
       setIsLoading(false);
       setIsInitializing(false);
     }
-  }, [loadFromCache]);
+  }, [loadFromCache, applyReconstructedTimers, preloadNotifications, reconstructTimersFromActivities]);
+
+  const ensureDraftActivityForTimer = useCallback(async (activityType, startTimestampMs, side = null) => {
+    if (!isAuthenticated || !hasBabyProfile) return;
+
+    const idKey = activityType === 'breastfeeding'
+      ? 'breastfeedingActivityId'
+      : `${activityType}ActivityId`;
+
+    if (timerMetaRef.current?.[idKey]) return;
+
+    const startIso = new Date(startTimestampMs).toISOString();
+    const draftPayload = {
+      type: activityType,
+      startTime: startIso,
+      endTime: null,
+      comment: activityType === 'breastfeeding'
+        ? `side:${side || 'left'}`
+        : 'started_from:app_timer',
+      leftDuration: activityType === 'breastfeeding' ? 0 : undefined,
+      rightDuration: activityType === 'breastfeeding' ? 0 : undefined,
+    };
+
+    try {
+      const { data, error } = await supabaseModule.activityHelpers.createActivity(draftPayload);
+      if (error) {
+        console.warn('Failed to create timer draft activity:', error);
+        return;
+      }
+
+      if (data?.id) {
+        setTimerMeta(prev => ({ ...prev, [idKey]: data.id }));
+      }
+    } catch (error) {
+      console.warn('Failed to persist running timer draft:', error);
+    }
+  }, [isAuthenticated, hasBabyProfile]);
 
   const getActivityChronologyTime = useCallback((activity) => {
     if (!activity) return 0;
@@ -750,10 +888,6 @@ const ActivityTracker = () => {
   const visibleHistoryDayGroups = useMemo(() => {
     return historyDayGroups.slice(0, historyVisibleDayCount);
   }, [historyDayGroups, historyVisibleDayCount]);
-
-  const hasBabyProfile = useMemo(() => {
-    return Boolean(babyProfile.name?.trim() && babyProfile.birthDate);
-  }, [babyProfile]);
 
   const getWeekStart = useCallback((offset = 0) => {
     const now = new Date();
@@ -988,6 +1122,7 @@ const ActivityTracker = () => {
 
         const updatedMeta = { ...prev };
         delete updatedMeta.breastfeedingStartTime;
+        delete updatedMeta.breastfeedingActivityId;
         return updatedMeta;
       });
     }
@@ -998,6 +1133,7 @@ const ActivityTracker = () => {
         if (!prev[metaKey]) return prev;
         const updatedMeta = { ...prev };
         delete updatedMeta[metaKey];
+        delete updatedMeta[`${timerType}ActivityId`];
         return updatedMeta;
       });
     }
@@ -1120,15 +1256,24 @@ const ActivityTracker = () => {
       if (isAuthenticated) {
         // Save to Supabase
         const supabaseData = convertToSupabaseActivity(activityData);
+        const draftActivityId = !editingId
+          ? (formData.type === 'breastfeeding'
+            ? timerMeta.breastfeedingActivityId
+            : timerMeta[`${formData.type}ActivityId`])
+          : null;
+        const updateTargetId = editingId || draftActivityId;
         
-        if (editingId) {
-          const { data, error } = await supabaseModule.activityHelpers.updateActivity(editingId, supabaseData);
+        if (updateTargetId) {
+          const { data, error } = await supabaseModule.activityHelpers.updateActivity(updateTargetId, supabaseData);
           if (error) throw error;
           
           const updatedActivity = convertFromSupabaseActivity(data);
           // 🔧 ИСПРАВЛЕНИЕ: Обновляем state и инвалидируем кеш
           setActivities(prev => {
-            const updatedActivities = prev.map(a => a.id === editingId ? updatedActivity : a);
+            const hasExisting = prev.some(a => a.id === updateTargetId);
+            const updatedActivities = hasExisting
+              ? prev.map(a => a.id === updateTargetId ? updatedActivity : a)
+              : [updatedActivity, ...prev];
             // Инвалидируем кеш supabaseService
             supabaseService.invalidateTableCache('activities').catch(console.error);
             return updatedActivities;
@@ -1319,9 +1464,9 @@ const ActivityTracker = () => {
 
   const saveTimersImmediately = useCallback((timersData, pausedData, metaData) => {
     Promise.all([
-      cacheService.set('active_timers', timersData, CACHE_TTL_SECONDS),
-      cacheService.set('paused_timers', pausedData, CACHE_TTL_SECONDS),
-      cacheService.set('timer_meta', metaData, CACHE_TTL_SECONDS),
+      cacheService.set('active_timers', timersData, null),
+      cacheService.set('paused_timers', pausedData, null),
+      cacheService.set('timer_meta', metaData, null),
     ]).catch(error => {
       console.error('Failed to persist timers:', error);
     });
@@ -1817,6 +1962,9 @@ const ActivityTracker = () => {
         breastfeedingStartTime: prev.breastfeedingStartTime || new Date(now - (Number.isFinite(ownPausedDuration) ? ownPausedDuration : 0)).toISOString()
       }));
 
+      const draftStart = now - (Number.isFinite(ownPausedDuration) ? ownPausedDuration : 0);
+      void ensureDraftActivityForTimer('breastfeeding', draftStart, timerType);
+
       return;
     }
 
@@ -1826,6 +1974,11 @@ const ActivityTracker = () => {
       ...prev,
       [`${key}StartTime`]: prev[`${key}StartTime`] || new Date(now - (Number.isFinite(pausedDuration) ? pausedDuration : 0)).toISOString()
     }));
+
+    const draftStart = now - (Number.isFinite(pausedDuration) ? pausedDuration : 0);
+    if (['sleep', 'walk', 'activity'].includes(key)) {
+      void ensureDraftActivityForTimer(key, draftStart);
+    }
   };
 
   const pauseTimer = (timerType, activityType) => {
