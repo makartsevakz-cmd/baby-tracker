@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Статистика кормления</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@300;400;600&display=swap');
+
+  :root {
+    --bg: #FDF6F0;
+    --surface: #FFFFFF;
+    --surface2: #FFF8F3;
+    --border: #F0E4D8;
+    --text-primary: #2D1B0E;
+    --text-secondary: #8B6B55;
+    --text-muted: #B8977F;
+    --accent: #FF7043;
+    --accent-soft: #FFE0D6;
+    --breast-l: #FF6B9D;
+    --breast-r: #A855F7;
+    --bottle-mix: #F59E0B;
+    --bottle-water: #38BDF8;
+    --bottle-milk: #EC4899;
+    --heat1: #FFF3E0;
+    --heat2: #FFE0B2;
+    --heat3: #FFCC80;
+    --heat4: #FFA726;
+    --heat5: #E65100;
+    --shadow: 0 2px 16px rgba(45,27,14,0.06);
+    --shadow-lg: 0 8px 32px rgba(45,27,14,0.10);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Nunito Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 24px 16px 48px;
+  }
+
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .app-label {
+    font-family: 'Nunito', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .header h1 {
+    font-family: 'Nunito', sans-serif;
+    font-size: 28px;
+    font-weight: 900;
+    color: var(--text-primary);
+    line-height: 1.2;
+  }
+  .header h1 span { color: var(--accent); }
+
+  /* Week picker */
+  .week-picker {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 36px;
+  }
+  .week-btn {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    background: var(--surface);
+    cursor: pointer;
+    font-size: 16px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-secondary);
+    transition: all .2s;
+  }
+  .week-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .week-label {
+    font-family: 'Nunito', sans-serif;
+    font-weight: 800;
+    font-size: 15px;
+    color: var(--text-primary);
+    min-width: 190px;
+    text-align: center;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--surface);
+    border-radius: 20px;
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow);
+    border: 1px solid var(--border);
+  }
+  .card-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    gap: 12px;
+  }
+  .card-title {
+    font-family: 'Nunito', sans-serif;
+    font-size: 17px;
+    font-weight: 800;
+    color: var(--text-primary);
+    line-height: 1.3;
+  }
+  .card-emoji { font-size: 22px; flex-shrink: 0; }
+  .card-desc {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+    line-height: 1.5;
+  }
+
+  /* Chart 1: Heatmap */
+  .heatmap-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .heatmap-grid {
+    display: grid;
+    grid-template-columns: 36px repeat(7, 1fr);
+    gap: 3px;
+    min-width: 360px;
+  }
+  .hm-corner { }
+  .hm-day-label {
+    font-family: 'Nunito', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 2px 0 6px;
+  }
+  .hm-time-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 6px;
+    font-weight: 600;
+  }
+  .hm-cell {
+    border-radius: 5px;
+    aspect-ratio: 1;
+    cursor: default;
+    transition: transform .15s;
+    position: relative;
+  }
+  .hm-cell:hover { transform: scale(1.15); z-index: 2; }
+  .hm-cell[data-v="0"] { background: #F7EDE5; }
+  .hm-cell[data-v="1"] { background: var(--heat2); }
+  .hm-cell[data-v="2"] { background: var(--heat3); }
+  .hm-cell[data-v="3"] { background: var(--heat4); }
+  .hm-cell[data-v="4"] { background: var(--heat5); }
+
+  .heatmap-legend {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 14px;
+    justify-content: flex-end;
+  }
+  .hm-leg-label { font-size: 11px; color: var(--text-muted); }
+  .hm-leg-swatch {
+    width: 14px; height: 14px; border-radius: 3px;
+  }
+
+  /* Chart 2: Stacked bar */
+  .chart-container {
+    position: relative;
+    height: 220px;
+  }
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-weight: 600;
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  /* Chart 3: Breast balance */
+  .breast-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .breast-card {
+    border-radius: 14px;
+    padding: 16px;
+    text-align: center;
+  }
+  .breast-card.left { background: #FFF0F6; }
+  .breast-card.right { background: #F5F3FF; }
+  .breast-side {
+    font-family: 'Nunito', sans-serif;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .breast-card.left .breast-side { color: var(--breast-l); }
+  .breast-card.right .breast-side { color: var(--breast-r); }
+  .breast-total {
+    font-family: 'Nunito', sans-serif;
+    font-size: 26px;
+    font-weight: 900;
+    line-height: 1;
+    margin-bottom: 2px;
+  }
+  .breast-card.left .breast-total { color: var(--breast-l); }
+  .breast-card.right .breast-total { color: var(--breast-r); }
+  .breast-unit { font-size: 12px; color: var(--text-muted); }
+
+  .balance-bar-wrap {
+    margin: 4px 0 10px;
+    background: #F0E4D8;
+    border-radius: 100px;
+    height: 10px;
+    overflow: hidden;
+    display: flex;
+  }
+  .balance-bar-l {
+    height: 100%;
+    background: var(--breast-l);
+    border-radius: 100px 0 0 100px;
+    transition: width .6s cubic-bezier(.34,1.56,.64,1);
+  }
+  .balance-bar-r {
+    height: 100%;
+    background: var(--breast-r);
+    border-radius: 0 100px 100px 0;
+    flex: 1;
+    transition: width .6s;
+  }
+  .balance-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 14px;
+    font-weight: 600;
+  }
+
+  .breast-chart-container {
+    position: relative;
+    height: 180px;
+  }
+
+  .tip-box {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-top: 16px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .tip-icon { font-size: 16px; flex-shrink: 0; margin-top: 1px; }
+  .tip-text { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; }
+  .tip-text strong { color: var(--text-primary); font-weight: 700; }
+
+  .section-divider {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin: 8px 0 16px;
+  }
+
+  /* Day dots under heatmap chart 2 */
+  .day-total-row {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+  }
+  .day-total-chip {
+    flex: 1;
+    background: var(--accent-soft);
+    border-radius: 8px;
+    padding: 6px 2px;
+    text-align: center;
+  }
+  .day-total-chip .dt-day {
+    font-family: 'Nunito', sans-serif;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    display: block;
+  }
+  .day-total-chip .dt-val {
+    font-family: 'Nunito', sans-serif;
+    font-size: 13px;
+    font-weight: 900;
+    color: var(--accent);
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="app-label">Baby Tracker</div>
+  <h1>Статистика <span>кормления</span></h1>
+</div>
+
+<div class="week-picker">
+  <button class="week-btn" onclick="changeWeek(-1)">‹</button>
+  <div class="week-label" id="weekLabel">19–25 мая 2025</div>
+  <button class="week-btn" onclick="changeWeek(1)">›</button>
+</div>
+
+<!-- CARD 1: Heatmap -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Время кормлений по дням</div>
+    </div>
+    <div class="card-emoji">🕐</div>
+  </div>
+  <div class="card-desc">Когда малыш чаще всего просит кушать. Тёмнее — больше кормлений в этот час.</div>
+  <div class="heatmap-wrap">
+    <div class="heatmap-grid" id="heatmapGrid"></div>
+  </div>
+  <div class="heatmap-legend">
+    <span class="hm-leg-label">меньше</span>
+    <div class="hm-leg-swatch" style="background:#F7EDE5"></div>
+    <div class="hm-leg-swatch" style="background:var(--heat2)"></div>
+    <div class="hm-leg-swatch" style="background:var(--heat3)"></div>
+    <div class="hm-leg-swatch" style="background:var(--heat4)"></div>
+    <div class="hm-leg-swatch" style="background:var(--heat5)"></div>
+    <span class="hm-leg-label">больше</span>
+  </div>
+  <div class="tip-box" style="margin-top:14px">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Как читать:</strong> строки — часы суток (с 0:00 до 23:00), столбцы — дни недели. Самые тёмные клетки — пик кормлений. Видно, что малыш активнее ест утром (7–9) и вечером (19–21).</div>
+  </div>
+</div>
+
+<!-- CARD 2: Bottle stacked bar -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Кормление из бутылочки</div>
+    </div>
+    <div class="card-emoji">🍼</div>
+  </div>
+  <div class="card-desc">Сколько и чего малыш пил из бутылочки каждый день — смесь, грудное молоко, вода.</div>
+  <div class="chart-container">
+    <canvas id="bottleChart"></canvas>
+  </div>
+  <div class="chart-legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--bottle-mix)"></div>Смесь</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--bottle-milk)"></div>Грудное молоко</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--bottle-water)"></div>Вода</div>
+  </div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Как читать:</strong> высота всего столбца — суммарный объём за день (мл). Цветные сегменты показывают состав. Сравнивайте столбцы по дням, чтобы увидеть динамику и заметить изменения.</div>
+  </div>
+</div>
+
+<!-- CARD 3: Breast balance -->
+<div class="card">
+  <div class="card-header">
+    <div>
+      <div class="card-title">Баланс груди</div>
+    </div>
+    <div class="card-emoji">🤱</div>
+  </div>
+  <div class="card-desc">Сколько времени малыш кормился у каждой груди, чтобы выработка молока оставалась равномерной.</div>
+
+  <div class="breast-row">
+    <div class="breast-card left">
+      <div class="breast-side">Левая</div>
+      <div class="breast-total" id="leftTotal">0</div>
+      <div class="breast-unit">мин за неделю</div>
+    </div>
+    <div class="breast-card right">
+      <div class="breast-side">Правая</div>
+      <div class="breast-total" id="rightTotal">0</div>
+      <div class="breast-unit">мин за неделю</div>
+    </div>
+  </div>
+
+  <div class="balance-label">
+    <span id="leftPct">0%</span>
+    <span>баланс груди</span>
+    <span id="rightPct">0%</span>
+  </div>
+  <div class="balance-bar-wrap">
+    <div class="balance-bar-l" id="balanceL" style="width:50%"></div>
+    <div class="balance-bar-r" id="balanceR"></div>
+  </div>
+
+  <div class="breast-chart-container">
+    <canvas id="breastChart"></canvas>
+  </div>
+
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Как читать:</strong> цветные линии показывают минуты кормления из каждой груди по дням. Чем ближе линии друг к другу — тем лучше баланс. Полоска сверху показывает соотношение за всю неделю. <strong>Идеально: 45–55% на каждую сторону.</strong></div>
+  </div>
+</div>
+
+<script>
+// ─── DATA ───────────────────────────────────────────────
+const weeks = [
+  { label: '5–11 мая 2025', offset: -2 },
+  { label: '12–18 мая 2025', offset: -1 },
+  { label: '19–25 мая 2025', offset: 0 },
+];
+let currentWeek = 2;
+
+// Heatmap data: [day0..day6][hour] counts 0–4
+const heatmapData = [
+  // Пн  Вт  Ср  Чт  Пт  Сб  Вс
+  [0,0,0,0,0,0,0], // 0h
+  [0,0,0,0,0,0,0], // 1
+  [1,0,1,0,0,1,0], // 2
+  [2,1,0,1,1,0,1], // 3
+  [1,2,1,2,1,1,1], // 4
+  [0,1,1,0,1,1,0], // 5
+  [1,0,0,1,0,0,1], // 6
+  [3,4,3,4,3,3,4], // 7
+  [4,3,4,3,4,4,3], // 8
+  [2,2,2,2,2,2,2], // 9
+  [1,1,2,1,1,1,2], // 10
+  [2,2,1,2,2,1,2], // 11
+  [3,2,3,2,3,2,3], // 12
+  [2,3,2,3,2,3,2], // 13
+  [1,1,1,1,1,1,1], // 14
+  [2,2,2,2,2,2,2], // 15
+  [1,2,1,1,2,1,2], // 16
+  [2,1,2,2,1,2,1], // 17
+  [1,2,1,1,2,2,2], // 18
+  [4,3,4,3,4,4,3], // 19
+  [4,4,3,4,3,3,4], // 20
+  [3,3,4,3,4,3,4], // 21
+  [2,2,2,2,2,2,2], // 22
+  [1,1,1,1,1,1,1], // 23
+];
+
+const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+
+// Bottle data per day [mix, breast_milk, water] ml
+const bottleData = [
+  [120, 80, 30],   // Пн
+  [100, 90, 20],   // Вт
+  [130, 70, 40],   // Ср
+  [90,  100, 30],  // Чт
+  [110, 85, 25],   // Пт
+  [140, 60, 35],   // Сб
+  [95,  110, 20],  // Вс
+];
+
+// Breast data [left_min, right_min] per day
+const breastData = [
+  [42, 38], [35, 45], [40, 40], [38, 42],
+  [44, 36], [30, 50], [43, 37]
+];
+
+// ─── WEEK PICKER ─────────────────────────────────────────
+function changeWeek(dir) {
+  currentWeek = Math.max(0, Math.min(weeks.length - 1, currentWeek + dir));
+  document.getElementById('weekLabel').textContent = weeks[currentWeek].label;
+}
+
+// ─── HEATMAP ─────────────────────────────────────────────
+function buildHeatmap() {
+  const grid = document.getElementById('heatmapGrid');
+  grid.innerHTML = '';
+  // corner
+  const corner = document.createElement('div');
+  grid.appendChild(corner);
+  // day headers
+  days.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'hm-day-label';
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+  // rows: hours 0-23, show every 2h label
+  for (let h = 0; h < 24; h++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'hm-time-label';
+    lbl.textContent = h % 3 === 0 ? h + ':00' : '';
+    grid.appendChild(lbl);
+    for (let d = 0; d < 7; d++) {
+      const cell = document.createElement('div');
+      cell.className = 'hm-cell';
+      cell.setAttribute('data-v', heatmapData[h][d]);
+      cell.title = `${days[d]}, ${h}:00 — ${heatmapData[h][d]} кормл.`;
+      grid.appendChild(cell);
+    }
+  }
+}
+
+// ─── BOTTLE CHART ────────────────────────────────────────
+function buildBottleChart() {
+  const ctx = document.getElementById('bottleChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: days,
+      datasets: [
+        {
+          label: 'Смесь',
+          data: bottleData.map(d => d[0]),
+          backgroundColor: '#F59E0B',
+          borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6 },
+          borderSkipped: false,
+        },
+        {
+          label: 'Грудное молоко',
+          data: bottleData.map(d => d[1]),
+          backgroundColor: '#EC4899',
+        },
+        {
+          label: 'Вода',
+          data: bottleData.map(d => d[2]),
+          backgroundColor: '#38BDF8',
+          borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 },
+          borderSkipped: false,
+        },
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            footer: (items) => {
+              const total = items.reduce((s, i) => s + i.parsed.y, 0);
+              return `Итого: ${total} мл`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: { font: { family: 'Nunito', weight: '700', size: 12 }, color: '#8B6B55' }
+        },
+        y: {
+          stacked: true,
+          grid: { color: '#F0E4D8' },
+          ticks: { font: { size: 11 }, color: '#B8977F', callback: v => v + ' мл' },
+          border: { display: false }
+        }
+      }
+    }
+  });
+}
+
+// ─── BREAST CHART ────────────────────────────────────────
+function buildBreastChart() {
+  const leftTotal = breastData.reduce((s, d) => s + d[0], 0);
+  const rightTotal = breastData.reduce((s, d) => s + d[1], 0);
+  const total = leftTotal + rightTotal;
+  const leftPct = Math.round(leftTotal / total * 100);
+  const rightPct = 100 - leftPct;
+
+  document.getElementById('leftTotal').textContent = leftTotal;
+  document.getElementById('rightTotal').textContent = rightTotal;
+  document.getElementById('leftPct').textContent = leftPct + '%';
+  document.getElementById('rightPct').textContent = rightPct + '%';
+  document.getElementById('balanceL').style.width = leftPct + '%';
+
+  const ctx = document.getElementById('breastChart').getContext('2d');
+  new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        {
+          label: 'Левая',
+          data: breastData.map(d => d[0]),
+          borderColor: '#FF6B9D',
+          backgroundColor: 'rgba(255,107,157,0.10)',
+          borderWidth: 2.5,
+          pointBackgroundColor: '#FF6B9D',
+          pointRadius: 4,
+          fill: true,
+          tension: 0.4,
+        },
+        {
+          label: 'Правая',
+          data: breastData.map(d => d[1]),
+          borderColor: '#A855F7',
+          backgroundColor: 'rgba(168,85,247,0.10)',
+          borderWidth: 2.5,
+          pointBackgroundColor: '#A855F7',
+          pointRadius: 4,
+          fill: true,
+          tension: 0.4,
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          labels: {
+            font: { family: 'Nunito', weight: '700', size: 12 },
+            color: '#2D1B0E',
+            usePointStyle: true,
+            pointStyle: 'circle',
+            boxWidth: 8,
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => ` ${ctx.dataset.label}: ${ctx.parsed.y} мин`
+          }
+        }
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { font: { family: 'Nunito', weight: '700', size: 12 }, color: '#8B6B55' }
+        },
+        y: {
+          grid: { color: '#F0E4D8' },
+          ticks: { font: { size: 11 }, color: '#B8977F', callback: v => v + ' мин' },
+          border: { display: false },
+          min: 20,
+        }
+      }
+    }
+  });
+}
+
+// ─── INIT ────────────────────────────────────────────────
+buildHeatmap();
+buildBottleChart();
+buildBreastChart();
+</script>
+</body>
+</html>
