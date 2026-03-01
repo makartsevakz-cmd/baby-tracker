@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Статистика сна</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Nunito+Sans:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg: #F0F4FF;
+    --surface: #FFFFFF;
+    --surface2: #F5F8FF;
+    --border: #DDE4F5;
+    --text-primary: #1A1F3A;
+    --text-secondary: #5A6080;
+    --text-muted: #9BA3C0;
+    --night: #4F46E5;
+    --night-soft: #EEF0FF;
+    --day: #F59E0B;
+    --day-soft: #FFFBEB;
+    --total: #10B981;
+    --total-soft: #ECFDF5;
+    --warn: #EF4444;
+    --warn-soft: #FEF2F2;
+    --shadow: 0 2px 16px rgba(79,70,229,0.07);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Nunito Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 24px 16px 60px;
+    max-width: 520px;
+    margin: 0 auto;
+  }
+
+  .header { text-align: center; margin-bottom: 24px; }
+  .app-label { font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 700; letter-spacing: 2.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 6px; }
+  .header h1 { font-family: 'Nunito', sans-serif; font-size: 26px; font-weight: 900; }
+  .header h1 span { color: var(--night); }
+
+  .week-picker { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 28px; }
+  .week-btn { width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--border); background: var(--surface); cursor: pointer; font-size: 18px; display: flex; align-items: center; justify-content: center; color: var(--text-secondary); transition: all .18s; }
+  .week-btn:hover { border-color: var(--night); color: var(--night); background: var(--night-soft); }
+  .week-label { font-family: 'Nunito', sans-serif; font-weight: 800; font-size: 14px; color: var(--text-primary); min-width: 185px; text-align: center; }
+
+  .section-label { font-family: 'Nunito', sans-serif; font-size: 10px; font-weight: 800; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin: 24px 0 10px 4px; }
+
+  .card { background: var(--surface); border-radius: 20px; padding: 20px 18px; margin-bottom: 14px; box-shadow: var(--shadow); border: 1px solid var(--border); }
+  .card-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 4px; gap: 10px; }
+  .card-title { font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 800; line-height: 1.3; }
+  .card-emoji { font-size: 20px; flex-shrink: 0; }
+  .card-desc { font-size: 12px; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5; }
+
+  .tip-box { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 13px; margin-top: 14px; display: flex; gap: 9px; align-items: flex-start; }
+  .tip-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+  .tip-text { font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; }
+  .tip-text strong { color: var(--text-primary); font-weight: 700; }
+
+  /* Alerts */
+  .alert-card { border-radius: 14px; padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+  .alert-card.warn-card { background: var(--warn-soft); border: 1px solid #FECACA; }
+  .alert-card.good-card { background: var(--total-soft); border: 1px solid #6EE7B7; }
+  .alert-icon { font-size: 17px; flex-shrink: 0; margin-top: 1px; }
+  .alert-title { font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 800; margin-bottom: 2px; }
+  .warn-card .alert-title { color: var(--warn); }
+  .good-card .alert-title { color: var(--total); }
+  .alert-body { font-size: 12px; color: var(--text-secondary); line-height: 1.4; }
+
+  /* Summary grid */
+  .summary-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .sum-card { border-radius: 14px; padding: 14px 14px 12px; }
+  .sum-card.night   { background: var(--night-soft); }
+  .sum-card.day     { background: var(--day-soft); }
+  .sum-card.total   { background: var(--total-soft); }
+  .sum-card.longest { background: #F5F3FF; }
+  .sum-label { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
+  .sum-val { font-family: 'Nunito', sans-serif; font-weight: 900; font-size: 21px; line-height: 1; margin-bottom: 2px; }
+  .sum-card.night .sum-val   { color: var(--night); }
+  .sum-card.day .sum-val     { color: var(--day); }
+  .sum-card.total .sum-val   { color: var(--total); }
+  .sum-card.longest .sum-val { color: #7C3AED; }
+  .sum-sub { font-size: 10.5px; color: var(--text-secondary); }
+  .norm-track { height: 6px; background: rgba(0,0,0,0.09); border-radius: 100px; overflow: hidden; margin-top: 8px; }
+  .norm-fill { height: 100%; border-radius: 100px; }
+  .norm-hint { font-size: 9.5px; color: var(--text-muted); margin-top: 3px; font-weight: 600; }
+  .interval-row { display: flex; gap: 8px; margin-top: 10px; }
+  .int-chip { flex: 1; border-radius: 12px; padding: 10px 10px 9px; text-align: center; }
+  .int-chip.night-chip { background: var(--night-soft); }
+  .int-chip.day-chip   { background: var(--day-soft); }
+  .int-chip-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
+  .int-chip-val { font-family: 'Nunito', sans-serif; font-size: 17px; font-weight: 900; }
+  .night-chip .int-chip-val { color: var(--night); }
+  .day-chip   .int-chip-val { color: var(--day); }
+  .int-chip-hint { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
+
+  /* Trend */
+  .trend-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .trend-chip { flex: 1; border-radius: 12px; padding: 10px 10px; display: flex; align-items: center; gap: 8px; }
+  .trend-chip.up   { background: #ECFDF5; }
+  .trend-chip.down { background: var(--warn-soft); }
+  .trend-chip.flat { background: var(--night-soft); }
+  .trend-arrow { font-size: 18px; }
+  .trend-label { font-size: 9.5px; font-weight: 700; letter-spacing: .8px; text-transform: uppercase; color: var(--text-muted); }
+  .trend-val { font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 900; }
+  .trend-chip.up   .trend-val { color: var(--total); }
+  .trend-chip.down .trend-val { color: var(--warn); }
+  .trend-chip.flat .trend-val { color: var(--night); }
+
+  .chart-wrap { position: relative; }
+  .h220 { height: 220px; }
+  .h180 { height: 180px; }
+  .chart-legend { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+  .legend-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  /* Wakings */
+  .wakings-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 5px; }
+  .waking-col { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .waking-day-label { font-family: 'Nunito', sans-serif; font-size: 10px; font-weight: 700; color: var(--text-muted); margin-bottom: 2px; }
+  .waking-dot-wrap { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .waking-dot { width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-family: 'Nunito', sans-serif; font-size: 11px; font-weight: 900; border: 2px solid transparent; }
+  .waking-dot.def  { background: var(--night-soft); color: var(--night); }
+  .waking-dot.warn { background: var(--warn-soft); color: var(--warn); border-color: #FECACA; }
+  .waking-dot.good { background: var(--total-soft); color: var(--total); }
+  .waking-dot.none { background: var(--border); color: var(--text-muted); }
+  .waking-time { font-size: 8.5px; color: var(--text-muted); font-weight: 600; }
+
+  /* Clock */
+  .clock-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+  .clock-canvas-wrap { position: relative; width: 270px; height: 270px; }
+  #clockCanvas { width: 270px; height: 270px; }
+  .clock-center-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; pointer-events: none; }
+  .cl-big { font-family: 'Nunito', sans-serif; font-size: 20px; font-weight: 900; color: var(--text-primary); display: block; }
+  .cl-sm  { font-size: 10px; color: var(--text-muted); font-weight: 600; }
+  .clock-legend { display: flex; gap: 14px; align-items: center; }
+  .clock-leg-item { display: flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--text-secondary); font-weight: 600; }
+  .clock-leg-swatch { width: 12px; height: 12px; border-radius: 50%; }
+
+  /* Timeline */
+  .timeline-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .tl-inner { min-width: 460px; }
+  .tl-hours-row { display: flex; margin-left: 26px; margin-bottom: 4px; }
+  .tl-hour-lbl { font-size: 9px; color: var(--text-muted); font-weight: 600; flex: 1; }
+  .tl-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .tl-day-lbl { width: 20px; font-family:'Nunito',sans-serif; font-size: 10px; font-weight: 700; color: var(--text-muted); text-align: right; flex-shrink: 0; }
+  .tl-track { flex: 1; height: 18px; background: #EEF0FF; border-radius: 6px; position: relative; overflow: hidden; }
+  .tl-seg { position: absolute; top: 1px; bottom: 1px; border-radius: 3px; }
+  .tl-seg.ns { background: var(--night); }
+  .tl-seg.ds { background: var(--day); }
+  .tl-seg.ws { background: rgba(239,68,68,0.3); border: 1px solid #FCA5A5; border-radius: 2px; }
+  .tl-day-total { font-family:'Nunito',sans-serif; font-size: 10px; font-weight: 800; color: var(--text-secondary); width: 34px; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="app-label">Baby Tracker</div>
+  <h1>Статистика <span>сна</span></h1>
+</div>
+
+<div class="week-picker">
+  <button class="week-btn" onclick="changeWeek(-1)">‹</button>
+  <div class="week-label" id="weekLabel">19–25 мая 2025</div>
+  <button class="week-btn" onclick="changeWeek(1)">›</button>
+</div>
+
+<!-- ALERTS -->
+<div class="section-label">⚡ Обратите внимание</div>
+<div class="alert-card warn-card">
+  <div class="alert-icon">⚠️</div>
+  <div>
+    <div class="alert-title">Среда — мало сна</div>
+    <div class="alert-body">Суммарный сон 10 ч 50 м — на 1 ч 10 м ниже нормы. Также 3 ночных пробуждения.</div>
+  </div>
+</div>
+<div class="alert-card good-card">
+  <div class="alert-icon">✅</div>
+  <div>
+    <div class="alert-title">Тренд улучшается</div>
+    <div class="alert-body">По сравнению с прошлой неделей средний суточный сон вырос на 28 минут.</div>
+  </div>
+</div>
+
+<!-- BLOCK A -->
+<div class="section-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-header">
+    <div><div class="card-title">Средние значения</div></div>
+    <div class="card-emoji">🌙☀️</div>
+  </div>
+  <div class="card-desc">Сколько малыш спал в среднем, как это соответствует норме и интервалы бодрствования.</div>
+  <div class="summary-grid">
+    <div class="sum-card night">
+      <div class="sum-label">Ночной сон</div>
+      <div class="sum-val">9 ч 20</div>
+      <div class="sum-sub">avg · 1 эп/ночь</div>
+      <div class="norm-track"><div class="norm-fill" style="width:78%;background:var(--night)"></div></div>
+      <div class="norm-hint">норма 9–11 ч</div>
+    </div>
+    <div class="sum-card day">
+      <div class="sum-label">Дневной сон</div>
+      <div class="sum-val">3 ч 10</div>
+      <div class="sum-sub">avg · 2–3 эп/день</div>
+      <div class="norm-track"><div class="norm-fill" style="width:63%;background:var(--day)"></div></div>
+      <div class="norm-hint">норма 2–4 ч</div>
+    </div>
+    <div class="sum-card total">
+      <div class="sum-label">Суточный итог</div>
+      <div class="sum-val">12 ч 30</div>
+      <div class="sum-sub">avg за сутки</div>
+      <div class="norm-track"><div class="norm-fill" style="width:70%;background:var(--total)"></div></div>
+      <div class="norm-hint">норма 11–14 ч</div>
+    </div>
+    <div class="sum-card longest">
+      <div class="sum-label">Макс. без пробуждений</div>
+      <div class="sum-val">5 ч 40</div>
+      <div class="sum-sub">лучшая ночь — сб</div>
+      <div class="norm-track"><div class="norm-fill" style="width:56%;background:#7C3AED"></div></div>
+      <div class="norm-hint">цель 6+ ч</div>
+    </div>
+  </div>
+  <div class="interval-row">
+    <div class="int-chip night-chip">
+      <div class="int-chip-label">Перед ночью</div>
+      <div class="int-chip-val">5 ч 0 м</div>
+      <div class="int-chip-hint">интервал бодрств.</div>
+    </div>
+    <div class="int-chip day-chip">
+      <div class="int-chip-label">Между снами</div>
+      <div class="int-chip-val">1 ч 50 м</div>
+      <div class="int-chip-hint">интервал бодрств.</div>
+    </div>
+  </div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Интервал бодрствования</strong> — если вырос больше нормы, малыш перегуливает и укладывать сложнее. <strong>Макс. без пробуждений</strong> — показатель зрелости ночного сна, который спрашивают на приёме у педиатра.</div>
+  </div>
+</div>
+
+<!-- BLOCK B -->
+<div class="section-label">📈 Динамика по дням</div>
+<div class="card">
+  <div class="card-header">
+    <div><div class="card-title">Общий сон + тренд</div></div>
+    <div class="card-emoji">📊</div>
+  </div>
+  <div class="card-desc">Столбцы — состав сна за день. Линии — суточный итог этой и прошлой недели.</div>
+  <div class="trend-row">
+    <div class="trend-chip up">
+      <div class="trend-arrow">📈</div>
+      <div><div class="trend-label">Суточный</div><div class="trend-val">+28 мин</div></div>
+    </div>
+    <div class="trend-chip down">
+      <div class="trend-arrow">📉</div>
+      <div><div class="trend-label">Ночной</div><div class="trend-val">−12 мин</div></div>
+    </div>
+    <div class="trend-chip flat">
+      <div class="trend-arrow">➡️</div>
+      <div><div class="trend-label">Дневной</div><div class="trend-val">+40 мин</div></div>
+    </div>
+  </div>
+  <div class="chart-wrap h220"><canvas id="totalChart"></canvas></div>
+  <div class="chart-legend">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--night)"></div>Ночной</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--day)"></div>Дневной</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--total);border-radius:50%"></div>Эта нед.</div>
+    <div class="legend-item"><div class="legend-dot" style="background:#C7D2FE;border-radius:50%"></div>Прошлая нед.</div>
+  </div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Красные столбцы</strong> — дни ниже нормы. <strong>Пунктир</strong> — прошлая неделя. Красная точка на линии — день ниже нормы.</div>
+  </div>
+</div>
+
+<!-- BLOCK C -->
+<div class="section-label">🌃 Ночные пробуждения</div>
+<div class="card">
+  <div class="card-header">
+    <div><div class="card-title">Сколько раз и когда просыпался</div></div>
+    <div class="card-emoji">😴</div>
+  </div>
+  <div class="card-desc">Число пробуждений за каждую ночь и время каждого. Красный — 3 и больше.</div>
+  <div class="wakings-grid" id="wakingsGrid"></div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Одинаковое время каждую ночь</strong> (напр. 3:10) — цикличные пробуждения в конце фазы сна, не голод. <strong>Пробуждения в 5–6 утра</strong> — признак раннего подъёма или слишком раннего укладывания.</div>
+  </div>
+</div>
+
+<!-- BLOCK D -->
+<div class="section-label">🕐 Паттерн сна по часам</div>
+<div class="card">
+  <div class="card-header">
+    <div><div class="card-title">Циферблат сна</div></div>
+    <div class="card-emoji">🕐</div>
+  </div>
+  <div class="card-desc">Насыщенность сектора — как часто малыш спал в этот час за неделю. Внешнее кольцо — ночной, внутреннее — дневной.</div>
+  <div class="clock-wrap">
+    <div class="clock-canvas-wrap">
+      <canvas id="clockCanvas" width="540" height="540"></canvas>
+      <div class="clock-center-label">
+        <span class="cl-big">12.5 ч</span>
+        <span class="cl-sm">avg/сутки</span>
+      </div>
+    </div>
+    <div class="clock-legend">
+      <div class="clock-leg-item"><div class="clock-leg-swatch" style="background:var(--night)"></div>Ночной</div>
+      <div class="clock-leg-item"><div class="clock-leg-swatch" style="background:var(--day)"></div>Дневной</div>
+    </div>
+  </div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Тёмная дуга ночью</strong> (22:00–7:00) — стабильный режим. Если ночная дуга смещается вправо — укладывание происходит позже. <strong>Пятна днём</strong> около 12–13 и 16 — регулярные дневные окна.</div>
+  </div>
+</div>
+
+<!-- BLOCK E -->
+<div class="section-label">📅 Расписание сна</div>
+<div class="card">
+  <div class="card-header">
+    <div><div class="card-title">Когда спал каждый день</div></div>
+    <div class="card-emoji">📅</div>
+  </div>
+  <div class="card-desc">Каждая строка — один день. Полоски — периоды сна. Красные — ночные пробуждения. Цифра — итог дня.</div>
+  <div class="timeline-wrap">
+    <div class="tl-inner" id="timelineGrid"></div>
+  </div>
+  <div class="chart-legend" style="margin-top:10px">
+    <div class="legend-item"><div class="legend-dot" style="background:var(--night)"></div>Ночной</div>
+    <div class="legend-item"><div class="legend-dot" style="background:var(--day)"></div>Дневной</div>
+    <div class="legend-item"><div class="legend-dot" style="background:rgba(239,68,68,0.35);border:1px solid #FCA5A5"></div>Пробуждение</div>
+  </div>
+  <div class="tip-box">
+    <div class="tip-icon">💡</div>
+    <div class="tip-text"><strong>Хороший режим</strong> — строки похожи друг на друга. Следите, смещается ли ночь вперёд или назад и стабильны ли дневные окна по времени.</div>
+  </div>
+</div>
+
+<script>
+const weeks = [
+  { label: '5–11 мая 2025' },
+  { label: '12–18 мая 2025' },
+  { label: '19–25 мая 2025' },
+];
+let currentWeek = 2;
+const days = ['Пн','Вт','Ср','Чт','Пт','Вс','Вс'];
+
+const nightSleep = [9.5, 9.0, 8.5, 8.8, 9.2, 10.0, 9.5];
+const daySleep   = [3.0, 3.5, 2.3, 3.2, 3.4, 2.5,  3.2];
+const prevNight  = [9.0, 8.8, 8.9, 8.5, 9.0, 9.5,  9.2];
+const prevDay    = [2.5, 2.8, 2.5, 2.8, 3.0, 2.2,  2.8];
+const normMin = 11, normMax = 14;
+
+const wakings = [
+  { count:2, times:['3:10','5:30'] },
+  { count:1, times:['4:20'] },
+  { count:3, times:['2:50','4:00','5:10'] },
+  { count:1, times:['3:40'] },
+  { count:2, times:['3:20','5:00'] },
+  { count:0, times:[] },
+  { count:1, times:['4:10'] },
+];
+
+const clockNight = [7,7,6,6,5,3,1,0,0,0,0,0,0,0,0,0,0,0,0,0,3,5,7,7];
+const clockDay   = [0,0,0,0,0,0,0,1,2,2,2,4,5,4,3,2,2,3,2,1,0,0,0,0];
+
+const timeline = [
+  [{s:0,e:9.5,t:'ns'},{s:10.2,e:10.4,t:'ws'},{s:12.5,e:14.0,t:'ds'},{s:16.5,e:17.5,t:'ds'},{s:21.0,e:24,t:'ns'}],
+  [{s:0,e:9.0,t:'ns'},{s:12.0,e:13.5,t:'ds'},{s:15.5,e:17.0,t:'ds'},{s:21.5,e:24,t:'ns'}],
+  [{s:0,e:8.5,t:'ns'},{s:9.2,e:9.45,t:'ws'},{s:10.1,e:10.27,t:'ws'},{s:11.0,e:11.22,t:'ws'},{s:12.5,e:13.5,t:'ds'},{s:22.5,e:24,t:'ns'}],
+  [{s:0,e:8.8,t:'ns'},{s:11.5,e:13.5,t:'ds'},{s:15.5,e:16.5,t:'ds'},{s:21.0,e:24,t:'ns'}],
+  [{s:0,e:9.2,t:'ns'},{s:10.0,e:10.22,t:'ws'},{s:12.0,e:13.5,t:'ds'},{s:16.0,e:17.4,t:'ds'},{s:21.0,e:24,t:'ns'}],
+  [{s:0,e:10.0,t:'ns'},{s:13.0,e:14.0,t:'ds'},{s:21.0,e:24,t:'ns'}],
+  [{s:0,e:9.5,t:'ns'},{s:12.0,e:13.5,t:'ds'},{s:16.0,e:17.2,t:'ds'},{s:20.5,e:24,t:'ns'}],
+];
+
+function changeWeek(dir) {
+  currentWeek = Math.max(0, Math.min(weeks.length-1, currentWeek+dir));
+  document.getElementById('weekLabel').textContent = weeks[currentWeek].label;
+}
+
+function buildTotalChart() {
+  const ctx = document.getElementById('totalChart').getContext('2d');
+  const totals  = nightSleep.map((n,i) => +(n+daySleep[i]).toFixed(2));
+  const prevTot = prevNight.map((n,i)  => +(n+prevDay[i]).toFixed(2));
+  new Chart(ctx, {
+    data: {
+      labels: days,
+      datasets: [
+        { type:'bar', label:'Ночной сон', data:nightSleep,
+          backgroundColor: nightSleep.map((n,i)=>(n+daySleep[i])<normMin?'rgba(239,68,68,0.7)':'#4F46E5'),
+          stack:'sleep', order:2, borderRadius:{topLeft:0,topRight:0,bottomLeft:6,bottomRight:6}, borderSkipped:false },
+        { type:'bar', label:'Дневной сон', data:daySleep,
+          backgroundColor: daySleep.map((d,i)=>(nightSleep[i]+d)<normMin?'rgba(239,68,68,0.4)':'#F59E0B'),
+          stack:'sleep', order:2, borderRadius:{topLeft:6,topRight:6,bottomLeft:0,bottomRight:0}, borderSkipped:false },
+        { type:'line', label:'Итого', data:totals,
+          borderColor:'#10B981', backgroundColor:'transparent', borderWidth:2.5,
+          pointBackgroundColor:totals.map(t=>t<normMin?'#EF4444':'#10B981'), pointRadius:5, tension:0.4, order:1 },
+        { type:'line', label:'Прошлая нед.', data:prevTot,
+          borderColor:'#818CF8', backgroundColor:'transparent', borderWidth:1.5,
+          borderDash:[4,4], pointRadius:3, pointBackgroundColor:'#818CF8', tension:0.4, order:1 },
+      ]
+    },
+    options: {
+      responsive:true, maintainAspectRatio:false,
+      plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>{const v=c.parsed.y;return ` ${c.dataset.label}: ${Math.floor(v)}ч ${Math.round((v-Math.floor(v))*60)}м`;}}} },
+      scales:{
+        x:{ stacked:true, grid:{display:false}, ticks:{font:{family:'Nunito',weight:'700',size:11},color:'#5A6080'} },
+        y:{ stacked:true, grid:{color:'#DDE4F5'}, border:{display:false}, ticks:{font:{size:10},color:'#9BA3C0',callback:v=>v+' ч'}, max:16 }
+      }
+    }
+  });
+}
+
+function buildWakings() {
+  const grid = document.getElementById('wakingsGrid');
+  grid.innerHTML = '';
+  const dayLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  wakings.forEach((w,i) => {
+    const col = document.createElement('div');
+    col.className = 'waking-col';
+    const dl = document.createElement('div');
+    dl.className = 'waking-day-label'; dl.textContent = dayLabels[i];
+    col.appendChild(dl);
+    const dw = document.createElement('div');
+    dw.className = 'waking-dot-wrap';
+    const dot = document.createElement('div');
+    dot.className = 'waking-dot '+(w.count===0?'good':w.count>=3?'warn':'def');
+    dot.textContent = w.count;
+    dw.appendChild(dot);
+    const showTimes = w.count===0 ? ['—'] : w.times;
+    showTimes.forEach(t => {
+      const tm = document.createElement('div');
+      tm.className='waking-time'; tm.textContent=t; dw.appendChild(tm);
+    });
+    col.appendChild(dw);
+    grid.appendChild(col);
+  });
+}
+
+function buildClock() {
+  const canvas = document.getElementById('clockCanvas');
+  const W = canvas.width, cx=W/2, cy=W/2;
+  const ctx = canvas.getContext('2d');
+  const outerR=W*0.455, midR=W*0.34, innerR=W*0.225, centerR=W*0.175;
+  ctx.clearRect(0,0,W,W);
+  ctx.beginPath(); ctx.arc(cx,cy,outerR,0,Math.PI*2); ctx.fillStyle='#F0F4FF'; ctx.fill();
+  for(let h=0;h<24;h++){
+    const a1=(h/24)*Math.PI*2-Math.PI/2, a2=((h+1)/24)*Math.PI*2-Math.PI/2, gap=0.03;
+    const ni=clockNight[h]/7;
+    if(ni>0){ ctx.beginPath(); ctx.arc(cx,cy,outerR,a1+gap,a2-gap); ctx.arc(cx,cy,midR,a2-gap,a1+gap,true); ctx.closePath(); ctx.fillStyle=`rgba(79,70,229,${0.06+ni*0.94})`; ctx.fill(); }
+    const di=clockDay[h]/7;
+    if(di>0){ ctx.beginPath(); ctx.arc(cx,cy,midR,a1+gap,a2-gap); ctx.arc(cx,cy,innerR,a2-gap,a1+gap,true); ctx.closePath(); ctx.fillStyle=`rgba(245,158,11,${0.06+di*0.94})`; ctx.fill(); }
+  }
+  [outerR,midR,innerR,centerR].forEach(r=>{ ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.strokeStyle='#DDE4F5'; ctx.lineWidth=1.5; ctx.stroke(); });
+  for(let h=0;h<24;h++){
+    const a=(h/24)*Math.PI*2-Math.PI/2;
+    ctx.beginPath(); ctx.moveTo(cx+Math.cos(a)*(outerR+3),cy+Math.sin(a)*(outerR+3)); ctx.lineTo(cx+Math.cos(a)*(outerR+(h%6===0?16:8)),cy+Math.sin(a)*(outerR+(h%6===0?16:8)));
+    ctx.strokeStyle=h%6===0?'#818CF8':'#C7D2FE'; ctx.lineWidth=h%6===0?2:1.2; ctx.stroke();
+  }
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font=`bold ${W*0.031}px Nunito`; ctx.fillStyle='#5A6080';
+  [0,6,12,18].forEach(h=>{ const a=(h/24)*Math.PI*2-Math.PI/2, r=outerR+30; ctx.fillText(h+':00',cx+Math.cos(a)*r,cy+Math.sin(a)*r); });
+  ctx.beginPath(); ctx.arc(cx,cy,centerR,0,Math.PI*2); ctx.fillStyle='#FFFFFF'; ctx.fill(); ctx.strokeStyle='#DDE4F5'; ctx.lineWidth=1.5; ctx.stroke();
+}
+
+function buildTimeline() {
+  const grid = document.getElementById('timelineGrid');
+  grid.innerHTML='';
+  const hRow=document.createElement('div'); hRow.className='tl-hours-row';
+  for(let h=0;h<=24;h+=3){ const l=document.createElement('div'); l.className='tl-hour-lbl'; l.textContent=h===24?'':h+':00'; hRow.appendChild(l); }
+  grid.appendChild(hRow);
+  const dayLabels = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  dayLabels.forEach((day,di)=>{
+    const row=document.createElement('div'); row.className='tl-row';
+    const dl=document.createElement('div'); dl.className='tl-day-lbl'; dl.textContent=day; row.appendChild(dl);
+    const track=document.createElement('div'); track.className='tl-track';
+    timeline[di].forEach(seg=>{ const el=document.createElement('div'); el.className='tl-seg '+seg.t; el.style.left=(seg.s/24*100)+'%'; el.style.width=((seg.e-seg.s)/24*100)+'%'; track.appendChild(el); });
+    row.appendChild(track);
+    const tot=nightSleep[di]+daySleep[di]; const tv=document.createElement('div'); tv.className='tl-day-total';
+    tv.textContent=Math.floor(tot)+'ч'+Math.round((tot%1)*60)+'м'; row.appendChild(tv);
+    grid.appendChild(row);
+  });
+}
+
+buildTotalChart(); buildWakings(); buildClock(); buildTimeline();
+</script>
+</body>
+</html>
