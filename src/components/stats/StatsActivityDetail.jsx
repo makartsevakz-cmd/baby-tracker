@@ -109,6 +109,8 @@ const SleepTrendChip = ({ label, value }) => {
 
 const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
   const canvasRef = React.useRef(null);
+  const DIAL_SIZE = 640;
+  const DIAL_PADDING = 56;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -118,10 +120,11 @@ const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
     const W = canvas.width;
     const cx = W / 2;
     const cy = W / 2;
-    const outerR = W * 0.455;
-    const midR = W * 0.34;
-    const innerR = W * 0.225;
-    const centerR = W * 0.175;
+    const maxSafeR = (W / 2) - DIAL_PADDING;
+    const outerR = maxSafeR;
+    const midR = maxSafeR * 0.76;
+    const innerR = maxSafeR * 0.5;
+    const centerR = maxSafeR * 0.38;
 
     ctx.clearRect(0, 0, W, W);
     ctx.beginPath();
@@ -166,7 +169,7 @@ const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
     for (let h = 0; h < 24; h += 1) {
       const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
       const fromR = outerR + 3;
-      const toR = outerR + (h % 6 === 0 ? 16 : 8);
+      const toR = outerR + (h % 6 === 0 ? 18 : 10);
       ctx.beginPath();
       ctx.moveTo(cx + (Math.cos(a) * fromR), cy + (Math.sin(a) * fromR));
       ctx.lineTo(cx + (Math.cos(a) * toR), cy + (Math.sin(a) * toR));
@@ -177,11 +180,11 @@ const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
 
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.font = `bold ${Math.round(W * 0.031)}px Nunito`;
+    ctx.font = `bold ${Math.round(W * 0.04)}px Nunito`;
     ctx.fillStyle = '#5A6080';
     [0, 6, 12, 18].forEach((h) => {
       const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
-      const r = outerR + 30;
+      const r = outerR + 34;
       ctx.fillText(`${h}:00`, cx + (Math.cos(a) * r), cy + (Math.sin(a) * r));
     });
 
@@ -196,8 +199,8 @@ const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
 
   return (
     <div className="flex flex-col items-center">
-      <div className="relative w-full max-w-[320px]">
-        <canvas ref={canvasRef} width={540} height={540} className="h-auto w-full" />
+      <div className="relative w-full max-w-[420px]">
+        <canvas ref={canvasRef} width={DIAL_SIZE} height={DIAL_SIZE} className="h-auto w-full" />
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="text-center">
             <div className="font-black text-gray-800">{(avgTotalMinutes / 60).toFixed(1)} ч</div>
