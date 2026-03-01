@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import supabaseService from '../../services/supabaseService.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -32,6 +33,35 @@ const StatsCard = ({ title, children }) => (
   </div>
 );
 
+const WeekPickerCard = ({ selectedMonday, currentMonday, onWeekStartChange }) => {
+  const moveWeek = (delta) => {
+    const next = new Date(selectedMonday);
+    next.setDate(next.getDate() + (delta * 7));
+    const normalized = getMonday(next);
+    if (normalized > currentMonday) return;
+    onWeekStartChange?.(toDateInputValue(normalized));
+  };
+
+  return (
+    <div className="bg-white rounded-2xl shadow-lg p-4">
+      <div className="flex items-center justify-center gap-3">
+        <button type="button" className="h-9 w-9 rounded-full border-2 border-purple-100 text-purple-500 hover:bg-purple-50" onClick={() => moveWeek(-1)}>
+          ‹
+        </button>
+        <div className="min-w-[180px] text-center text-sm font-extrabold text-gray-700">{formatWeekLabel(selectedMonday)}</div>
+        <button
+          type="button"
+          className="h-9 w-9 rounded-full border-2 border-purple-100 text-purple-500 hover:bg-purple-50 disabled:opacity-40"
+          onClick={() => moveWeek(1)}
+          disabled={selectedMonday >= currentMonday}
+        >
+          ›
+        </button>
+      </div>
+    </div>
+  );
+};
+
 const EmptyState = ({ text }) => (
   <div className="rounded-2xl border border-dashed border-purple-200 bg-purple-50 p-6 text-center text-sm text-purple-500">
     {text}
@@ -45,6 +75,167 @@ const MetricPill = ({ label, value, color = 'bg-purple-50 text-purple-700' }) =>
   </div>
 );
 
+const SleepAlertCard = ({ type = 'warn', title, body }) => {
+  const isWarn = type === 'warn';
+  return (
+    <div className={`mb-2 flex items-start gap-3 rounded-2xl border px-3 py-3 ${isWarn ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}`}>
+      <div className="text-base leading-none">{isWarn ? '⚠️' : '✅'}</div>
+      <div>
+        <div className={`text-sm font-extrabold ${isWarn ? 'text-red-500' : 'text-emerald-600'}`}>{title}</div>
+        <div className="text-xs leading-relaxed text-gray-500">{body}</div>
+      </div>
+    </div>
+  );
+};
+
+const getTrendChipMeta = (diffMinutes) => {
+  if (diffMinutes > TREND_SIGNIFICANT_MIN) return { arrow: '📈', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+  if (diffMinutes < -TREND_SIGNIFICANT_MIN) return { arrow: '📉', className: 'border-red-200 bg-red-50 text-red-700' };
+  return { arrow: '➡️', className: 'border-indigo-200 bg-indigo-50 text-indigo-700' };
+};
+
+const SleepTrendChip = ({ label, value }) => {
+  const meta = getTrendChipMeta(value);
+  return (
+    <div className={`flex items-center gap-2 rounded-xl border px-2 py-1.5 ${meta.className}`}>
+      <div>{meta.arrow}</div>
+      <div>
+        <div className="text-[11px] font-bold">{label}</div>
+        <div className="text-xs font-extrabold">{formatTrend(value)}</div>
+      </div>
+    </div>
+  );
+};
+
+const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
+  const canvasRef = React.useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const cx = W / 2;
+    const cy = W / 2;
+    const outerR = W * 0.455;
+    const midR = W * 0.34;
+    const innerR = W * 0.225;
+    const centerR = W * 0.175;
+
+    ctx.clearRect(0, 0, W, W);
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    ctx.fillStyle = '#F0F4FF';
+    ctx.fill();
+
+    for (let h = 0; h < 24; h += 1) {
+      const a1 = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const a2 = ((h + 1) / 24) * Math.PI * 2 - (Math.PI / 2);
+      const gap = 0.03;
+
+      const ni = (matrixNight[h] || 0) / 7;
+      if (ni > 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, outerR, a1 + gap, a2 - gap);
+        ctx.arc(cx, cy, midR, a2 - gap, a1 + gap, true);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(79,70,229,${0.06 + (ni * 0.94)})`;
+        ctx.fill();
+      }
+
+      const di = (matrixNap[h] || 0) / 7;
+      if (di > 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, midR, a1 + gap, a2 - gap);
+        ctx.arc(cx, cy, innerR, a2 - gap, a1 + gap, true);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(245,158,11,${0.06 + (di * 0.94)})`;
+        ctx.fill();
+      }
+    }
+
+    [outerR, midR, innerR, centerR].forEach((r) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#DDE4F5';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+
+    for (let h = 0; h < 24; h += 1) {
+      const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const fromR = outerR + 3;
+      const toR = outerR + (h % 6 === 0 ? 16 : 8);
+      ctx.beginPath();
+      ctx.moveTo(cx + (Math.cos(a) * fromR), cy + (Math.sin(a) * fromR));
+      ctx.lineTo(cx + (Math.cos(a) * toR), cy + (Math.sin(a) * toR));
+      ctx.strokeStyle = h % 6 === 0 ? '#818CF8' : '#C7D2FE';
+      ctx.lineWidth = h % 6 === 0 ? 2 : 1.2;
+      ctx.stroke();
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(W * 0.031)}px Nunito`;
+    ctx.fillStyle = '#5A6080';
+    [0, 6, 12, 18].forEach((h) => {
+      const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const r = outerR + 30;
+      ctx.fillText(`${h}:00`, cx + (Math.cos(a) * r), cy + (Math.sin(a) * r));
+    });
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, centerR, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+    ctx.strokeStyle = '#DDE4F5';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }, [matrixNight, matrixNap]);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-full max-w-[320px]">
+        <canvas ref={canvasRef} width={540} height={540} className="h-auto w-full" />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="text-center">
+            <div className="font-black text-gray-800">{(avgTotalMinutes / 60).toFixed(1)} ч</div>
+            <div className="text-[11px] text-gray-500">avg/сутки</div>
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Ночной</div>
+        <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />Дневной</div>
+      </div>
+    </div>
+  );
+};
+
+
+const SleepSectionCard = ({ title, emoji, desc, tip, children }) => (
+  <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-lg">
+    <div className="mb-1 flex items-start justify-between gap-2">
+      <h3 className="text-base font-extrabold text-gray-800">{title}</h3>
+      <div className="text-xl leading-none">{emoji}</div>
+    </div>
+    <p className="mb-4 text-xs leading-relaxed text-gray-500">{desc}</p>
+    {children}
+    {tip ? (
+      <div className="mt-3 flex gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2">
+        <span className="text-sm">💡</span>
+        <p className="text-[12px] leading-relaxed text-gray-600">{tip}</p>
+      </div>
+    ) : null}
+  </div>
+);
+
+const formatHourMinute = (decimalHours) => {
+  const h = Math.floor(decimalHours);
+  const m = Math.round((decimalHours - h) * 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
 const FeedingSectionCard = ({ title, emoji, desc, tip, children }) => (
   <div className="rounded-2xl border border-orange-100 bg-white p-4 shadow-lg">
     <div className="mb-1 flex items-start justify-between gap-2">
@@ -130,6 +321,62 @@ const formatInterval = (minutes) => {
 };
 
 const WEEK_DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const WEEK_DAYS_FULL = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
+const NIGHT_START_HOUR = 19;
+const NIGHT_END_HOUR = 7;
+const WAKING_WARN_THRESHOLD = 3;
+const TREND_SIGNIFICANT_MIN = 15;
+
+const fallbackSleepNorms = {
+  night: { min: 9 * 60, max: 11 * 60, label: 'норма 9–11 ч' },
+  nap: { min: 2 * 60, max: 4 * 60, label: 'норма 2–4 ч' },
+  total: { min: 11 * 60, max: 14 * 60, label: 'норма 11–14 ч' },
+  intervalNight: { min: 120, max: 240, label: 'перед ночью 2–4 ч' },
+  intervalNap: { min: 90, max: 180, label: 'днём 1.5–3 ч' },
+};
+
+const getAgeMonths = (birthDateLike) => {
+  if (!birthDateLike) return null;
+  const birth = new Date(birthDateLike);
+  if (Number.isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let months = (today.getFullYear() - birth.getFullYear()) * 12;
+  months += today.getMonth() - birth.getMonth();
+  if (today.getDate() < birth.getDate()) months -= 1;
+  return Math.max(0, months);
+};
+
+const formatWeekLabel = (mondayLike) => {
+  const monday = new Date(mondayLike);
+  monday.setHours(0, 0, 0, 0);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  const sameMonth = monday.getMonth() === sunday.getMonth();
+  const startDay = monday.toLocaleDateString('ru-RU', { day: 'numeric' });
+  const endDay = sunday.toLocaleDateString('ru-RU', { day: 'numeric' });
+  const month = sunday.toLocaleDateString('ru-RU', { month: 'long' });
+  return sameMonth ? `${startDay}–${endDay} ${month}` : `${startDay} ${monday.toLocaleDateString('ru-RU', { month: 'long' })} – ${endDay} ${month}`;
+};
+
+const sleepTypeByStart = (startDate) => {
+  const hour = new Date(startDate).getHours();
+  return (hour >= NIGHT_START_HOUR || hour < NIGHT_END_HOUR) ? 'night' : 'nap';
+};
+
+const clampPercentByNorm = (value, min, max) => {
+  if (value <= 0) return 0;
+  const targetMax = max || min || 1;
+  return Math.max(0, Math.min(100, (value / targetMax) * 100));
+};
+
+const formatTrend = (minutes) => {
+  if (minutes === null || minutes === undefined) return '—';
+  const abs = Math.round(Math.abs(minutes));
+  const sign = minutes > 0 ? '+' : minutes < 0 ? '−' : '±';
+  return `${sign}${abs} мин`;
+};
+
+const formatTime = (dateLike) => new Date(dateLike).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
 
 const getHeatLevel = (count, maxCount) => {
   if (!count || count <= 0 || maxCount <= 0) return 0;
@@ -290,7 +537,7 @@ const BreastBalanceChart = ({ data }) => {
 };
 
 // Вынесенный компонент с метриками, чтобы экран статистики было проще расширять новыми типами.
-const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekStartChange }) => {
+const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekStartChange, babyBirthDate }) => {
   const currentMonday = useMemo(() => getMonday(), []);
   const selectedMonday = useMemo(() => {
     const candidate = weekStartDate ? getMonday(weekStartDate) : currentMonday;
@@ -305,6 +552,67 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
     });
   }, [selectedMonday]);
   const [selectedTimelineDay, setSelectedTimelineDay] = useState(periodDays[periodDays.length - 1]);
+  const [sleepNorms, setSleepNorms] = useState(fallbackSleepNorms);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadSleepNorms = async () => {
+      const ageMonths = getAgeMonths(babyBirthDate);
+      const { data, error } = await supabaseService.getWithCache('sleep_norms', {
+        order: { column: 'age_min_months', ascending: true },
+      });
+
+      if (cancelled || error || !Array.isArray(data) || data.length === 0) {
+        if (error) {
+          console.warn('Не удалось загрузить нормы сна из БД, используется fallback:', error);
+        }
+        setSleepNorms(fallbackSleepNorms);
+        return;
+      }
+
+      const selectedNorm = data.find((item) => {
+        if (ageMonths === null) return false;
+        const min = Number(item.age_min_months) || 0;
+        const max = item.age_max_months === null ? Number.POSITIVE_INFINITY : Number(item.age_max_months);
+        return ageMonths >= min && ageMonths <= max;
+      }) || data[0];
+
+      setSleepNorms({
+        night: {
+          min: Number(selectedNorm.night_min_minutes) || fallbackSleepNorms.night.min,
+          max: Number(selectedNorm.night_max_minutes) || fallbackSleepNorms.night.max,
+          label: selectedNorm.night_label || fallbackSleepNorms.night.label,
+        },
+        nap: {
+          min: Number(selectedNorm.nap_min_minutes) || fallbackSleepNorms.nap.min,
+          max: Number(selectedNorm.nap_max_minutes) || fallbackSleepNorms.nap.max,
+          label: selectedNorm.nap_label || fallbackSleepNorms.nap.label,
+        },
+        total: {
+          min: Number(selectedNorm.total_min_minutes) || fallbackSleepNorms.total.min,
+          max: Number(selectedNorm.total_max_minutes) || fallbackSleepNorms.total.max,
+          label: selectedNorm.total_label || fallbackSleepNorms.total.label,
+        },
+        intervalNight: {
+          min: Number(selectedNorm.interval_before_night_min_minutes) || fallbackSleepNorms.intervalNight.min,
+          max: Number(selectedNorm.interval_before_night_max_minutes) || fallbackSleepNorms.intervalNight.max,
+          label: selectedNorm.interval_before_night_label || fallbackSleepNorms.intervalNight.label,
+        },
+        intervalNap: {
+          min: Number(selectedNorm.interval_nap_min_minutes) || fallbackSleepNorms.intervalNap.min,
+          max: Number(selectedNorm.interval_nap_max_minutes) || fallbackSleepNorms.intervalNap.max,
+          label: selectedNorm.interval_nap_label || fallbackSleepNorms.intervalNap.label,
+        },
+      });
+    };
+
+    loadSleepNorms();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [babyBirthDate]);
 
   useEffect(() => {
     if (!periodDays.includes(selectedTimelineDay)) {
@@ -428,6 +736,202 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
     return periodDays.map((day) => dayMap[day]);
   }, [periodDays, scopedActivities]);
 
+  const sleepWeekStats = useMemo(() => {
+    const dayMap = Object.fromEntries(periodDays.map((day) => [day, {
+      day,
+      label: WEEK_DAYS_SHORT[new Date(`${day}T00:00:00`).getDay() === 0 ? 6 : new Date(`${day}T00:00:00`).getDay() - 1],
+      fullLabel: WEEK_DAYS_FULL[new Date(`${day}T00:00:00`).getDay() === 0 ? 6 : new Date(`${day}T00:00:00`).getDay() - 1],
+      nightMin: 0,
+      napMin: 0,
+      totalMin: 0,
+      sessions: [],
+    }]));
+
+    const sleepSessions = scopedActivities
+      .filter((item) => item.type === 'sleep' && item.startTime && item.endTime)
+      .map((item) => {
+        const start = new Date(item.startTime);
+        const end = new Date(item.endTime);
+        const durationMin = Math.max(0, (end.getTime() - start.getTime()) / 60000);
+        return {
+          id: item.id,
+          day: toDayKey(start),
+          start,
+          end,
+          durationMin,
+          type: sleepTypeByStart(start),
+        };
+      })
+      .filter((session) => dayMap[session.day]);
+
+    sleepSessions.forEach((session) => {
+      const dayRow = dayMap[session.day];
+      dayRow.totalMin += session.durationMin;
+      if (session.type === 'night') dayRow.nightMin += session.durationMin;
+      else dayRow.napMin += session.durationMin;
+      dayRow.sessions.push(session);
+    });
+
+    const perDay = periodDays.map((day) => dayMap[day]);
+    const avg = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+    const dayWithNight = perDay.filter((d) => d.nightMin > 0).map((d) => d.nightMin);
+    const dayWithNap = perDay.filter((d) => d.napMin > 0).map((d) => d.napMin);
+    const avgNight = avg(dayWithNight);
+    const avgNap = avg(dayWithNap);
+    const avgTotal = perDay.reduce((sum, d) => sum + d.totalMin, 0) / 7;
+
+    const longestStretch = sleepSessions.reduce((max, item) => Math.max(max, item.durationMin), 0);
+    perDay.forEach((d) => {
+      const nightSessions = d.sessions.filter((s) => s.type === 'night').sort((a, b) => a.start - b.start);
+      let count = 0;
+      for (let i = 1; i < nightSessions.length; i++) {
+        const gap = (nightSessions[i].start - nightSessions[i - 1].end) / 60000;
+        if (gap >= 5) count += 1;
+      }
+      d.wakeCount = count;
+    });
+
+    const avgWakeCount = avg(perDay.map((d) => {
+      const nightSessions = d.sessions.filter((s) => s.type === 'night').sort((a, b) => a.start - b.start);
+      let count = 0;
+      for (let i = 1; i < nightSessions.length; i++) {
+        const gap = (nightSessions[i].start - nightSessions[i - 1].end) / 60000;
+        if (gap >= 5) count += 1;
+      }
+      return count;
+    }));
+
+    let bestStretchDayLabel = null;
+    let bestStretch = 0;
+    perDay.forEach((d) => {
+      d.sessions.forEach((s) => {
+        if (s.type === 'night' && s.durationMin > bestStretch) {
+          bestStretch = s.durationMin;
+          bestStretchDayLabel = d.label.toLowerCase();
+        }
+      });
+    });
+
+    const wakeIntervalsNight = [];
+    const wakeIntervalsNap = [];
+    const orderedByStart = sleepSessions.slice().sort((a, b) => a.start - b.start);
+    for (let i = 1; i < orderedByStart.length; i++) {
+      const gap = (orderedByStart[i].start - orderedByStart[i - 1].end) / 60000;
+      if (gap < 0) continue;
+      if (orderedByStart[i].type === 'night') wakeIntervalsNight.push(gap);
+      else wakeIntervalsNap.push(gap);
+    }
+
+    const avgIntervalNight = avg(wakeIntervalsNight);
+    const avgIntervalNap = avg(wakeIntervalsNap);
+
+    return {
+      perDay,
+      avgNight,
+      avgNap,
+      avgTotal,
+      longestStretch,
+      bestStretchDayLabel,
+      avgWakeCount,
+      avgIntervalNight,
+      avgIntervalNap,
+    };
+  }, [periodDays, scopedActivities]);
+
+  const previousWeekStats = useMemo(() => {
+    const prevDays = periodDays.map((day) => {
+      const d = new Date(`${day}T00:00:00`);
+      d.setDate(d.getDate() - 7);
+      return toDayKey(d);
+    });
+    const prevSet = new Set(prevDays);
+    const prevActivities = activities.filter((item) => item.startTime && prevSet.has(toDayKey(item.startTime)));
+    const totalsByDay = Object.fromEntries(prevDays.map((day) => [day, 0]));
+    let night = 0;
+    let nap = 0;
+
+    prevActivities.filter((item) => item.type === 'sleep' && item.endTime).forEach((item) => {
+      const start = new Date(item.startTime);
+      const durationMin = Math.max(0, (new Date(item.endTime) - start) / 60000);
+      const day = toDayKey(start);
+      if (totalsByDay[day] === undefined) return;
+      totalsByDay[day] += durationMin;
+      if (sleepTypeByStart(start) === 'night') night += durationMin;
+      else nap += durationMin;
+    });
+
+    return {
+      totals: prevDays.map((day) => totalsByDay[day]),
+      avgTotal: prevDays.reduce((sum, day) => sum + totalsByDay[day], 0) / 7,
+      avgNight: night / 7,
+      avgNap: nap / 7,
+      hasData: Object.values(totalsByDay).some((value) => value > 0),
+    };
+  }, [activities, periodDays]);
+
+  const sleepClockMatrix = useMemo(() => {
+    const nightByHour = Array.from({ length: 24 }, () => new Set());
+    const napByHour = Array.from({ length: 24 }, () => new Set());
+
+    sleepWeekStats.perDay.forEach((day) => {
+      day.sessions.forEach((session) => {
+        const dayStart = new Date(`${day.day}T00:00:00`);
+        const startH = (session.start.getTime() - dayStart.getTime()) / 3600000;
+        const endH = Math.min(24, (session.end.getTime() - dayStart.getTime()) / 3600000);
+        for (let h = 0; h < 24; h++) {
+          const intersects = startH < (h + 1) && endH > h;
+          if (!intersects) continue;
+          if (session.type === 'night') nightByHour[h].add(day.day);
+          else napByHour[h].add(day.day);
+        }
+      });
+    });
+
+    return {
+      night: nightByHour.map((set) => set.size),
+      nap: napByHour.map((set) => set.size),
+    };
+  }, [sleepWeekStats]);
+
+  const sleepTimelineByDay = useMemo(() => {
+    return sleepWeekStats.perDay.map((day) => {
+      const dayStart = new Date(`${day.day}T00:00:00`).getTime();
+      const dayEnd = dayStart + DAY_MS;
+      const sorted = day.sessions.slice().sort((a, b) => a.start - b.start);
+      const segments = [];
+
+      sorted.forEach((session, index) => {
+        const start = Math.max(dayStart, session.start.getTime());
+        const end = Math.min(dayEnd, session.end.getTime());
+        if (end > start) {
+          segments.push({
+            startH: (start - dayStart) / 3600000,
+            endH: (end - dayStart) / 3600000,
+            type: session.type === 'night' ? 'ns' : 'ds',
+          });
+        }
+
+        const next = sorted[index + 1];
+        if (session.type === 'night' && next?.type === 'night') {
+          const wakeStart = Math.max(dayStart, session.end.getTime());
+          const wakeEnd = Math.min(dayEnd, next.start.getTime());
+          if ((wakeEnd - wakeStart) / 60000 >= 5) {
+            segments.push({
+              startH: (wakeStart - dayStart) / 3600000,
+              endH: (wakeEnd - dayStart) / 3600000,
+              type: 'ws',
+            });
+          }
+        }
+      });
+
+      return {
+        ...day,
+        segments: segments.sort((a, b) => a.startH - b.startH),
+      };
+    });
+  }, [sleepWeekStats]);
+
   const selectedSleepTimeline = useMemo(() => {
     const dayStart = new Date(`${selectedTimelineDay}T00:00:00`).getTime();
     const dayEnd = dayStart + DAY_MS;
@@ -499,18 +1003,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
   if (selectedType === 'breastfeeding' || selectedType === 'bottle' || selectedType === 'feeding') {
     return (
       <div className="space-y-4">
-        <StatsCard title="Период">
-          <div className="text-xs text-gray-500 mb-2">Выберите понедельник недели</div>
-          <input
-            type="date"
-            value={toDateInputValue(selectedMonday)}
-            min={mondayDateInputMin}
-            max={toDateInputValue(currentMonday)}
-            step={7}
-            onChange={(e) => handleWeekChange(e.target.value)}
-            className="w-full rounded-xl border border-violet-100 bg-violet-50 px-3 py-2 text-sm"
-          />
-        </StatsCard>
+        <WeekPickerCard selectedMonday={selectedMonday} currentMonday={currentMonday} onWeekStartChange={onWeekStartChange} />
 
         <StatsCard title="Интервалы между кормлениями">
           {feedingData.some((item) => item.feedCount) ? (
@@ -571,41 +1064,172 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
   }
 
   if (selectedType === 'sleep') {
+    const trendTotal = previousWeekStats.hasData ? sleepWeekStats.avgTotal - previousWeekStats.avgTotal : null;
+    const trendNight = previousWeekStats.hasData ? sleepWeekStats.avgNight - previousWeekStats.avgNight : null;
+    const trendNap = previousWeekStats.hasData ? sleepWeekStats.avgNap - previousWeekStats.avgNap : null;
+    const maxTotal = Math.max(1, ...sleepWeekStats.perDay.map((d) => d.totalMin), ...previousWeekStats.totals, sleepNorms.total.max);
+    const warnDay = sleepWeekStats.perDay.find((day) => day.totalMin < sleepNorms.total.min || (day.wakeCount || 0) >= WAKING_WARN_THRESHOLD);
+    const warnTitle = warnDay ? `${warnDay.fullLabel} — мало сна` : 'Неделя в норме';
+    const warnBody = warnDay
+      ? `Суммарный сон ${formatMinutes(warnDay.totalMin)} — на ${formatMinutes(Math.max(0, sleepNorms.total.min - warnDay.totalMin))} ниже нормы.${warnDay.wakeCount ? ` Также ${warnDay.wakeCount} ночных пробуждения.` : ''}`
+      : 'Суммарный сон и ночные пробуждения в пределах целевого диапазона.';
+    const trendTitle = trendTotal !== null && trendTotal >= 0 ? 'Тренд улучшается' : 'Тренд без улучшения';
+    const trendBody = trendTotal === null
+      ? 'По сравнению с прошлой неделей пока недостаточно данных.'
+      : `По сравнению с прошлой неделей средний суточный сон ${trendTotal >= 0 ? 'вырос' : 'снизился'} на ${formatMinutes(Math.abs(trendTotal))}.`;
+
     return (
       <div className="space-y-4">
-        <StatsCard title="Сон: суммарная длительность по дням">
-          {sleepByDay.some((item) => item.hours) ? (
-            <SingleBarChart data={sleepByDay} valueKey="hours" color="bg-indigo-300" unit="ч" />
-          ) : (
-            <EmptyState text="За 7 дней нет завершённых сессий сна." />
-          )}
-        </StatsCard>
+        <WeekPickerCard selectedMonday={selectedMonday} currentMonday={currentMonday} onWeekStartChange={onWeekStartChange} />
 
-        <StatsCard title="Таймлайн сна за выбранный день">
-          <div className="mb-3">
-            <select
-              className="w-full rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-sm"
-              value={selectedTimelineDay}
-              onChange={(e) => setSelectedTimelineDay(e.target.value)}
-            >
-              {periodDays.map((day) => (
-                <option key={day} value={day}>{formatDayLabel(day)}</option>
-              ))}
-            </select>
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">⚡ Обратите внимание</div>
+        <div>
+          <SleepAlertCard type={warnDay ? 'warn' : 'good'} title={warnTitle} body={warnBody} />
+          <SleepAlertCard type={trendTotal !== null && trendTotal < 0 ? 'warn' : 'good'} title={trendTitle} body={trendBody} />
+        </div>
+
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">📋 Итоги недели</div>
+        <SleepSectionCard
+          title="Средние значения"
+          emoji="🌙☀️"
+          desc="Сколько малыш спал в среднем, как это соответствует норме и интервалы бодрствования."
+          tip={<><strong>Интервал бодрствования</strong> — если вырос больше нормы, малыш перегуливает и укладывать сложнее. <strong>Макс. без пробуждений</strong> — показатель зрелости ночного сна, который спрашивают на приёме у педиатра.</>}
+        >
+          <div className="grid grid-cols-2 gap-2">
+            <div className="rounded-xl bg-indigo-50 p-3"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Ночной сон</div><div className="text-xl font-black text-indigo-700">{formatMinutes(sleepWeekStats.avgNight)}</div><div className="mt-1 text-[10px] text-gray-500">avg · 1 эп/ночь</div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-indigo-100"><div className="h-full bg-indigo-600" style={{ width: `${clampPercentByNorm(sleepWeekStats.avgNight, sleepNorms.night.min, sleepNorms.night.max)}%` }} /></div><div className="mt-1 text-[10px] text-gray-400">{sleepNorms.night.label}</div></div>
+            <div className="rounded-xl bg-amber-50 p-3"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Дневной сон</div><div className="text-xl font-black text-amber-600">{formatMinutes(sleepWeekStats.avgNap)}</div><div className="mt-1 text-[10px] text-gray-500">avg · 2–3 эп/день</div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-amber-100"><div className="h-full bg-amber-500" style={{ width: `${clampPercentByNorm(sleepWeekStats.avgNap, sleepNorms.nap.min, sleepNorms.nap.max)}%` }} /></div><div className="mt-1 text-[10px] text-gray-400">{sleepNorms.nap.label}</div></div>
+            <div className="rounded-xl bg-emerald-50 p-3"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Суточный итог</div><div className="text-xl font-black text-emerald-600">{formatMinutes(sleepWeekStats.avgTotal)}</div><div className="mt-1 text-[10px] text-gray-500">avg за сутки</div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-emerald-100"><div className="h-full bg-emerald-500" style={{ width: `${clampPercentByNorm(sleepWeekStats.avgTotal, sleepNorms.total.min, sleepNorms.total.max)}%` }} /></div><div className="mt-1 text-[10px] text-gray-400">{sleepNorms.total.label}</div></div>
+            <div className="rounded-xl bg-violet-50 p-3"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Макс. без пробуждений</div><div className="text-xl font-black text-violet-700">{formatMinutes(sleepWeekStats.longestStretch)}</div><div className="mt-1 text-[10px] text-gray-500">лучшая ночь — {sleepWeekStats.bestStretchDayLabel || '—'}</div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-violet-100"><div className="h-full bg-violet-500" style={{ width: `${clampPercentByNorm(sleepWeekStats.longestStretch, 360, 480)}%` }} /></div><div className="mt-1 text-[10px] text-gray-400">цель 6+ ч</div></div>
           </div>
-          {selectedSleepTimeline.length ? (
-            <SleepTimeline sessions={selectedSleepTimeline} />
-          ) : (
-            <EmptyState text="В выбранный день нет завершённых периодов сна." />
-          )}
-        </StatsCard>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <div className="rounded-xl bg-indigo-50 p-2.5 text-center"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Перед ночью</div><div className="text-lg font-black text-indigo-700">{formatMinutes(sleepWeekStats.avgIntervalNight)}</div><div className="text-[10px] text-gray-500">интервал бодрств.</div></div>
+            <div className="rounded-xl bg-amber-50 p-2.5 text-center"><div className="text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">Между снами</div><div className="text-lg font-black text-amber-600">{formatMinutes(sleepWeekStats.avgIntervalNap)}</div><div className="text-[10px] text-gray-500">интервал бодрств.</div></div>
+          </div>
+        </SleepSectionCard>
+
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">📈 Динамика по дням</div>
+        <SleepSectionCard
+          title="Общий сон по дням + тренд"
+          emoji="📊"
+          desc="Столбцы — состав сна за день. Линии — суточный итог этой и прошлой недели."
+          tip={<><strong>Красные столбцы</strong> — дни ниже нормы. <strong>Пунктир</strong> — прошлая неделя. Красная точка на линии — день ниже нормы.</>}
+        >
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            <SleepTrendChip label="Суточный" value={trendTotal || 0} />
+            <SleepTrendChip label="Ночной" value={trendNight || 0} />
+            <SleepTrendChip label="Дневной" value={trendNap || 0} />
+          </div>
+          <div className="mb-2 flex h-52 items-end justify-between gap-2">
+            {sleepWeekStats.perDay.map((day, i) => {
+              const prev = previousWeekStats.totals[i] || 0;
+              const lowNorm = day.totalMin < sleepNorms.total.min;
+              const thisHeight = (day.totalMin / maxTotal) * 100;
+              const prevHeight = (prev / maxTotal) * 100;
+              return (
+                <div key={day.day} className="relative flex h-full w-full flex-col items-center justify-end">
+                  <div className={`mb-1 text-[10px] font-extrabold ${lowNorm ? 'text-red-500' : 'text-emerald-600'}`}>{formatMinutes(day.totalMin)}</div>
+                  <div className="relative flex h-40 w-9 items-end overflow-visible rounded-md bg-gray-100">
+                    <div className="w-full">
+                      <div className={`${lowNorm ? 'bg-red-300' : 'bg-amber-400'} w-full`} style={{ height: `${Math.max(2, (day.napMin / maxTotal) * 160)}px` }} />
+                      <div className={`${lowNorm ? 'bg-red-500' : 'bg-indigo-600'} w-full rounded-t-md`} style={{ height: `${Math.max(2, (day.nightMin / maxTotal) * 160)}px` }} />
+                    </div>
+                    <div className={`absolute left-1/2 h-2 w-2 -translate-x-1/2 rounded-full ${lowNorm ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ bottom: `${thisHeight}%` }} />
+                    <div className="absolute left-1/2 h-2 w-2 -translate-x-1/2 rounded-full border border-indigo-300 bg-indigo-200" style={{ bottom: `${prevHeight}%` }} />
+                  </div>
+                  <div className="mt-2 text-xs font-semibold text-gray-500">{day.label}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap gap-3 text-xs text-gray-500">
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-indigo-600" />Ночной</div>
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-400" />Дневной</div>
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />Эта нед.</div>
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-indigo-300" />Прошлая нед.</div>
+          </div>
+        </SleepSectionCard>
+
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">🌃 Ночные пробуждения</div>
+        <SleepSectionCard
+          title="Сколько раз и когда просыпался"
+          emoji="😴"
+          desc="Число пробуждений за каждую ночь и время каждого. Красный — 3 и больше."
+          tip={<><strong>Одинаковое время каждую ночь</strong> (напр. 3:10) — цикличные пробуждения в конце фазы сна, не голод. <strong>Пробуждения в 5–6 утра</strong> — признак раннего подъёма или слишком раннего укладывания.</>}
+        >
+          <div className="grid grid-cols-7 gap-1">
+            {sleepWeekStats.perDay.map((day) => {
+              const nightSessions = day.sessions.filter((s) => s.type === 'night').sort((a, b) => a.start - b.start);
+              const wakeTimes = [];
+              for (let i = 1; i < nightSessions.length; i++) {
+                const gap = (nightSessions[i].start - nightSessions[i - 1].end) / 60000;
+                if (gap >= 5) wakeTimes.push(formatTime(nightSessions[i - 1].end));
+              }
+              const wakeCount = wakeTimes.length;
+              return (
+                <div key={day.day} className="rounded-xl border border-indigo-100 bg-indigo-50 p-2 text-center">
+                  <div className="text-[11px] font-semibold text-gray-500">{day.label}</div>
+                  <div className={`mx-auto mt-1 flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${wakeCount >= WAKING_WARN_THRESHOLD ? 'bg-red-100 text-red-600' : wakeCount === 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-indigo-100 text-indigo-700'}`}>{wakeCount}</div>
+                  <div className="mt-1 text-[10px] text-gray-500">{wakeTimes.length ? wakeTimes.slice(0, 2).join(', ') : '—'}</div>
+                </div>
+              );
+            })}
+          </div>
+        </SleepSectionCard>
+
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">🕐 Паттерн сна по часам</div>
+        <SleepSectionCard
+          title="Циферблат сна"
+          emoji="🕐"
+          desc="Насыщенность сектора — как часто малыш спал в этот час за неделю. Внешнее кольцо — ночной, внутреннее — дневной."
+          tip={<><strong>Тёмная дуга ночью</strong> (22:00–7:00) — стабильный режим. Если ночная дуга смещается вправо — укладывание происходит позже. <strong>Пятна днём</strong> около 12–13 и 16 — регулярные дневные окна.</>}
+        >
+          <SleepClockDial matrixNight={sleepClockMatrix.night} matrixNap={sleepClockMatrix.nap} avgTotalMinutes={sleepWeekStats.avgTotal} />
+        </SleepSectionCard>
+
+        <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">📅 Расписание сна</div>
+        <SleepSectionCard
+          title="Расписание сна по дням"
+          emoji="🗓️"
+          desc="Каждая строка — один день. Полоски — периоды сна. Красные — ночные пробуждения. Цифра — итог дня."
+          tip={<><strong>Хороший режим</strong> — строки похожи друг на друга. Следите, смещается ли ночь вперёд или назад и стабильны ли дневные окна по времени.</>}
+        >
+          <div className="space-y-2">
+            <div className="ml-10 grid grid-cols-8 text-[10px] text-gray-400">
+              {[0, 3, 6, 9, 12, 15, 18, 21].map((h) => (<span key={h}>{h}:00</span>))}
+            </div>
+            {sleepTimelineByDay.map((day) => (
+              <div key={day.day} className="flex items-center gap-2">
+                <div className="w-8 text-xs font-semibold text-gray-500">{day.label}</div>
+                <div className="relative h-8 flex-1 rounded-lg bg-gray-100">
+                  {day.segments.map((seg, idx) => (
+                    <div
+                      key={`${day.day}-${idx}`}
+                      className={`absolute top-1 h-6 rounded ${seg.type === 'ns' ? 'bg-indigo-500' : seg.type === 'ds' ? 'bg-amber-400' : 'bg-red-300'}`}
+                      style={{ left: `${(seg.startH / 24) * 100}%`, width: `${Math.max(0.5, ((seg.endH - seg.startH) / 24) * 100)}%` }}
+                      title={`${formatHourMinute(seg.startH)}–${formatHourMinute(seg.endH)}`}
+                    />
+                  ))}
+                </div>
+                <div className="w-16 text-right text-xs font-bold text-gray-500">{formatMinutes(day.totalMin)}</div>
+              </div>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-indigo-500" />Ночной</div>
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-400" />Дневной</div>
+            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-red-300" />Пробуждения</div>
+          </div>
+        </SleepSectionCard>
       </div>
     );
   }
 
+
   if (selectedType === 'activity' || selectedType === 'walk') {
     return (
       <div className="space-y-4">
+        <WeekPickerCard selectedMonday={selectedMonday} currentMonday={currentMonday} onWeekStartChange={onWeekStartChange} />
+
         <StatsCard title="Сон и бодрствование за 7 дней">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <MetricPill label="Сон" value={formatMinutes(activityVsSleep.sleepMinutes)} color="bg-indigo-50 text-indigo-700" />
@@ -626,6 +1250,9 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
 
   if (selectedType === 'diaper') {
     return (
+      <div className="space-y-4">
+        <WeekPickerCard selectedMonday={selectedMonday} currentMonday={currentMonday} onWeekStartChange={onWeekStartChange} />
+
       <StatsCard title="Подгузники по дням (всего / мокрые / грязные)">
         {diaperByDay.some((item) => item.total) ? (
           <div className="space-y-2">
@@ -644,10 +1271,16 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
           <EmptyState text="За 7 дней нет записей о подгузниках." />
         )}
       </StatsCard>
+      </div>
     );
   }
 
-  return <EmptyState text="Для этой активности детальные метрики пока не настроены." />;
+  return (
+    <div className="space-y-4">
+      <WeekPickerCard selectedMonday={selectedMonday} currentMonday={currentMonday} onWeekStartChange={onWeekStartChange} />
+      <EmptyState text="Для этой активности детальные метрики пока не настроены." />
+    </div>
+  );
 };
 
 export default StatsActivityDetail;

@@ -3534,6 +3534,7 @@ const ActivityTracker = () => {
               activities={activities}
               weekStartDate={selectedStatsWeekStart}
               onWeekStartChange={setSelectedStatsWeekStart}
+              babyBirthDate={babyProfile.birthDate}
             />
           </div>
         </div>
