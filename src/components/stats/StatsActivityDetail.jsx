@@ -107,6 +107,112 @@ const SleepTrendChip = ({ label, value }) => {
   );
 };
 
+const SleepClockDial = ({ matrixNight, matrixNap, avgTotalMinutes }) => {
+  const canvasRef = React.useRef(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width;
+    const cx = W / 2;
+    const cy = W / 2;
+    const outerR = W * 0.455;
+    const midR = W * 0.34;
+    const innerR = W * 0.225;
+    const centerR = W * 0.175;
+
+    ctx.clearRect(0, 0, W, W);
+    ctx.beginPath();
+    ctx.arc(cx, cy, outerR, 0, Math.PI * 2);
+    ctx.fillStyle = '#F0F4FF';
+    ctx.fill();
+
+    for (let h = 0; h < 24; h += 1) {
+      const a1 = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const a2 = ((h + 1) / 24) * Math.PI * 2 - (Math.PI / 2);
+      const gap = 0.03;
+
+      const ni = (matrixNight[h] || 0) / 7;
+      if (ni > 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, outerR, a1 + gap, a2 - gap);
+        ctx.arc(cx, cy, midR, a2 - gap, a1 + gap, true);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(79,70,229,${0.06 + (ni * 0.94)})`;
+        ctx.fill();
+      }
+
+      const di = (matrixNap[h] || 0) / 7;
+      if (di > 0) {
+        ctx.beginPath();
+        ctx.arc(cx, cy, midR, a1 + gap, a2 - gap);
+        ctx.arc(cx, cy, innerR, a2 - gap, a1 + gap, true);
+        ctx.closePath();
+        ctx.fillStyle = `rgba(245,158,11,${0.06 + (di * 0.94)})`;
+        ctx.fill();
+      }
+    }
+
+    [outerR, midR, innerR, centerR].forEach((r) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = '#DDE4F5';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    });
+
+    for (let h = 0; h < 24; h += 1) {
+      const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const fromR = outerR + 3;
+      const toR = outerR + (h % 6 === 0 ? 16 : 8);
+      ctx.beginPath();
+      ctx.moveTo(cx + (Math.cos(a) * fromR), cy + (Math.sin(a) * fromR));
+      ctx.lineTo(cx + (Math.cos(a) * toR), cy + (Math.sin(a) * toR));
+      ctx.strokeStyle = h % 6 === 0 ? '#818CF8' : '#C7D2FE';
+      ctx.lineWidth = h % 6 === 0 ? 2 : 1.2;
+      ctx.stroke();
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.round(W * 0.031)}px Nunito`;
+    ctx.fillStyle = '#5A6080';
+    [0, 6, 12, 18].forEach((h) => {
+      const a = (h / 24) * Math.PI * 2 - (Math.PI / 2);
+      const r = outerR + 30;
+      ctx.fillText(`${h}:00`, cx + (Math.cos(a) * r), cy + (Math.sin(a) * r));
+    });
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, centerR, 0, Math.PI * 2);
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fill();
+    ctx.strokeStyle = '#DDE4F5';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }, [matrixNight, matrixNap]);
+
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-full max-w-[320px]">
+        <canvas ref={canvasRef} width={540} height={540} className="h-auto w-full" />
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <div className="text-center">
+            <div className="font-black text-gray-800">{(avgTotalMinutes / 60).toFixed(1)} ч</div>
+            <div className="text-[11px] text-gray-500">avg/сутки</div>
+          </div>
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+        <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-indigo-500" />Ночной</div>
+        <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-amber-400" />Дневной</div>
+      </div>
+    </div>
+  );
+};
+
 
 const SleepSectionCard = ({ title, emoji, desc, tip, children }) => (
   <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-lg">
@@ -215,6 +321,7 @@ const formatInterval = (minutes) => {
 };
 
 const WEEK_DAYS_SHORT = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+const WEEK_DAYS_FULL = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
 const NIGHT_START_HOUR = 19;
 const NIGHT_END_HOUR = 7;
 const WAKING_WARN_THRESHOLD = 3;
@@ -633,6 +740,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
     const dayMap = Object.fromEntries(periodDays.map((day) => [day, {
       day,
       label: WEEK_DAYS_SHORT[new Date(`${day}T00:00:00`).getDay() === 0 ? 6 : new Date(`${day}T00:00:00`).getDay() - 1],
+      fullLabel: WEEK_DAYS_FULL[new Date(`${day}T00:00:00`).getDay() === 0 ? 6 : new Date(`${day}T00:00:00`).getDay() - 1],
       nightMin: 0,
       napMin: 0,
       totalMin: 0,
@@ -961,7 +1069,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
     const trendNap = previousWeekStats.hasData ? sleepWeekStats.avgNap - previousWeekStats.avgNap : null;
     const maxTotal = Math.max(1, ...sleepWeekStats.perDay.map((d) => d.totalMin), ...previousWeekStats.totals, sleepNorms.total.max);
     const warnDay = sleepWeekStats.perDay.find((day) => day.totalMin < sleepNorms.total.min || (day.wakeCount || 0) >= WAKING_WARN_THRESHOLD);
-    const warnTitle = warnDay ? `${warnDay.label} — мало сна` : 'Неделя в норме';
+    const warnTitle = warnDay ? `${warnDay.fullLabel} — мало сна` : 'Неделя в норме';
     const warnBody = warnDay
       ? `Суммарный сон ${formatMinutes(warnDay.totalMin)} — на ${formatMinutes(Math.max(0, sleepNorms.total.min - warnDay.totalMin))} ниже нормы.${warnDay.wakeCount ? ` Также ${warnDay.wakeCount} ночных пробуждения.` : ''}`
       : 'Суммарный сон и ночные пробуждения в пределах целевого диапазона.';
@@ -1075,23 +1183,7 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
           desc="Насыщенность сектора — как часто малыш спал в этот час за неделю. Внешнее кольцо — ночной, внутреннее — дневной."
           tip={<><strong>Тёмная дуга ночью</strong> (22:00–7:00) — стабильный режим. Если ночная дуга смещается вправо — укладывание происходит позже. <strong>Пятна днём</strong> около 12–13 и 16 — регулярные дневные окна.</>}
         >
-          <div className="grid grid-cols-24 gap-1">
-            {Array.from({ length: 24 }, (_, h) => {
-              const nightAlpha = 0.06 + (sleepClockMatrix.night[h] / 7) * 0.94;
-              const napAlpha = 0.06 + (sleepClockMatrix.nap[h] / 7) * 0.94;
-              return (
-                <div key={h} className="space-y-1 text-center">
-                  <div className="h-2 rounded" style={{ backgroundColor: `rgba(79,70,229,${nightAlpha})` }} />
-                  <div className="h-2 rounded" style={{ backgroundColor: `rgba(245,158,11,${napAlpha})` }} />
-                  <div className="text-[8px] text-gray-400">{h % 6 === 0 ? h : ''}</div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
-            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-indigo-500" />Ночной</div>
-            <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded bg-amber-400" />Дневной</div>
-          </div>
+          <SleepClockDial matrixNight={sleepClockMatrix.night} matrixNap={sleepClockMatrix.nap} avgTotalMinutes={sleepWeekStats.avgTotal} />
         </SleepSectionCard>
 
         <div className="mb-1 px-1 text-[11px] font-extrabold uppercase tracking-[0.2em] text-gray-400">📅 Расписание сна</div>
