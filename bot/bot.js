@@ -116,8 +116,8 @@ function getStartInlineKeyboard() {
   return {
     inline_keyboard: [
       [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
-      [{ text: '🔄 Обновить статус', callback_data: 'check_registration' }],
-      [{ text: 'ℹ️ Что умеют приложение и бот', callback_data: 'show_features' }],
+      [{ text: '🔄 Проверить статус', callback_data: 'check_registration' }],
+      [{ text: 'ℹ️ Подробнее', callback_data: 'show_features' }],
     ],
   };
 }
@@ -126,26 +126,24 @@ function getRegistrationInlineKeyboard() {
   return getStartInlineKeyboard();
 }
 
+
+function getStatusRetryInlineKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }],
+      [{ text: '🔄 Проверить статус', callback_data: 'check_registration' }],
+    ],
+  };
+}
+
 async function sendFeaturesMessage(chatId) {
-  return bot.sendMessage(chatId, `
-📖 *Что умеют приложение и бот*
-
-📱 *В приложении:*
-• создание аккаунта и профиль малыша
-• карточка малыша и журнал активностей
-• статистика, графики и история
-• настройка напоминаний
-
-🤖 *В боте:*
-• быстрый запуск/остановка активностей
-• удобное меню активных таймеров
-• переход в приложение в один тап
-• напоминания из приложения
-
-Создайте аккаунт в приложении, затем возвращайтесь в бот для быстрых действий.
-  `.trim(), {
+  return bot.sendMessage(chatId, BOT_TEXTS.details, {
     parse_mode: 'Markdown',
-    reply_markup: getStartInlineKeyboard(),
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: '⬅️ Назад', callback_data: 'back_to_start' }],
+      ],
+    },
   });
 }
 
@@ -165,21 +163,18 @@ async function startRegistrationFlow(chatId, telegramUserId, username) {
 }
 
 
-async function sendRegistrationStatus(chatId, telegramUserId, successText = '✅ Аккаунт найден. Можно пользоваться ботом.') {
+async function sendRegistrationStatus(chatId, telegramUserId) {
   const { registered } = await isUserRegistered(telegramUserId);
 
   if (registered) {
-    await bot.sendMessage(chatId, successText, {
+    await bot.sendMessage(chatId, BOT_TEXTS.registrationSuccess, {
       reply_markup: getMainMenuKeyboard(),
     });
-    await sendMainMenuMessage(chatId);
+    await sendBotInstruction(chatId);
     return true;
   }
 
-  await bot.sendMessage(chatId,
-    '⚠️ Аккаунт пока не найден.\n\nСначала создайте аккаунт в приложении, затем нажмите «Проверить аккаунт».',
-    { reply_markup: getStartInlineKeyboard() }
-  );
+  await bot.sendMessage(chatId, BOT_TEXTS.registrationMissing, { reply_markup: getStatusRetryInlineKeyboard() });
   return false;
 }
 
@@ -376,20 +371,19 @@ async function checkAndSendNotifications() {
     
     if (!notifications || notifications.length === 0) {
       console.log('ℹ️ Нет активных уведомлений');
-      return;
+    } else {
+      console.log(`📬 Найдено ${notifications.length} активных уведомлений`);
     }
     
-    console.log(`📬 Найдено ${notifications.length} активных уведомлений`);
-    
     // Группируем по типу для статистики
-    const byType = notifications.reduce((acc, n) => {
+    const byType = (notifications || []).reduce((acc, n) => {
       acc[n.notification_type] = (acc[n.notification_type] || 0) + 1;
       return acc;
     }, {});
     console.log(`📊 Типы уведомлений:`, byType);
     
     // Обрабатываем уведомления ПОСЛЕДОВАТЕЛЬНО
-    for (const notification of notifications) {
+    for (const notification of (notifications || [])) {
       try {
         const userId = notification.user_id;
         const chatId = await resolveChatId(userId);
@@ -436,6 +430,8 @@ ${notification.message ? `\n💬 ${notification.message}` : ''}
         console.error(`Error processing notification ${notification.id}:`, notifError);
       }
     }
+
+    await checkWellbeingRoutines(now, currentMinute);
     
   } catch (error) {
     console.error('Error in checkAndSendNotifications:', error);
@@ -485,6 +481,148 @@ async function resolveChatId(userId) {
   return telegramId;
 }
 
+async function ensureMomMoodTable() {
+  if (!supabase) return;
+  try {
+    await supabase.rpc('exec_sql', {
+      sql: `
+      create table if not exists mom_mood_logs (
+        id uuid primary key default gen_random_uuid(),
+        user_id uuid not null references auth.users(id) on delete cascade,
+        date date not null,
+        mood text not null,
+        created_at timestamptz not null default now(),
+        unique(user_id, date)
+      );
+      `,
+    });
+  } catch (error) {
+    // В большинстве проектов RPC для SQL отключен, поэтому просто продолжаем.
+  }
+}
+
+async function saveMomMood(userId, mood) {
+  if (!supabase || !userId || !mood) return;
+  const date = new Date().toISOString().slice(0, 10);
+  await supabase
+    .from('mom_mood_logs')
+    .upsert({ user_id: userId, date, mood, created_at: new Date().toISOString() }, { onConflict: 'user_id,date' });
+}
+
+async function getDailyEngagementScore(babyId, now) {
+  if (!babyId) return null;
+  const start = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+  const end = now.toISOString();
+
+  const { data, error } = await supabase
+    .from('activities')
+    .select('start_time,end_time')
+    .eq('baby_id', babyId)
+    .gte('start_time', start)
+    .lte('start_time', end)
+    .order('start_time', { ascending: true });
+
+  if (error || !data?.length) return 0;
+
+  let totalMs = 0;
+  let hasGapOver4h = false;
+  let prev = null;
+
+  for (const row of data) {
+    const rowStart = new Date(row.start_time);
+    const rowEnd = new Date(row.end_time || row.start_time);
+    totalMs += Math.max(0, rowEnd - rowStart);
+    if (prev && rowStart - prev > 4 * 60 * 60 * 1000) {
+      hasGapOver4h = true;
+    }
+    prev = rowStart;
+  }
+
+  const score = Math.max(0, Math.min(100, (totalMs / (24 * 60 * 60 * 1000)) * 100));
+  return hasGapOver4h ? Math.min(score, 39) : score;
+}
+
+function engagementLabel(score) {
+  if (score >= 80) return 'активное использование';
+  if (score >= 40) return 'частичное использование';
+  return 'почти не использовалось';
+}
+
+async function sendDailyMoodCheckin(now) {
+  const { data: mappings } = await supabase.from('user_telegram_mapping').select('chat_id,user_id');
+  for (const row of mappings || []) {
+    const localKey = `${row.chat_id}:${now.toISOString().slice(0, 10)}`;
+    if (moodPromptState.get(row.chat_id) === localKey) continue;
+    await bot.sendMessage(row.chat_id, `💛 Как ты сегодня себя чувствуешь?\nВажно заботиться не только о малыше, но и о себе 🌷`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: '😊 Спокойно', callback_data: 'mood:calm' }],
+          [{ text: '😌 Нормально', callback_data: 'mood:normal' }],
+          [{ text: '😴 Устала', callback_data: 'mood:tired' }],
+          [{ text: '😔 Тревожно', callback_data: 'mood:anxious' }],
+          [{ text: '😭 Очень тяжело', callback_data: 'mood:hard' }],
+        ],
+      },
+    });
+    moodPromptState.set(row.chat_id, localKey);
+  }
+}
+
+async function sendWeeklyReport(now) {
+  const { data: mappings } = await supabase.from('user_telegram_mapping').select('chat_id,user_id');
+  for (const row of mappings || []) {
+    const { data: baby } = await supabase.from('babies').select('id,weight,height').eq('user_id', row.user_id).maybeSingle();
+    const { data: moods } = await supabase
+      .from('mom_mood_logs')
+      .select('mood')
+      .eq('user_id', row.user_id)
+      .gte('date', new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10));
+
+    const counts = (moods || []).reduce((acc, m) => ({ ...acc, [m.mood]: (acc[m.mood] || 0) + 1 }), {});
+    const dominant = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]?.[0];
+    const moodText = dominant
+      ? `По вашим отметкам чаще всего было состояние: ${moodLabels[dominant] || dominant}. Помните, вы не обязаны быть идеальной — вы уже делаете очень много.`
+      : 'За эту неделю мало отметок настроения, но это нормально. Можно начать с одного короткого чек-ина в день.';
+
+    const score = await getDailyEngagementScore(baby?.id, now);
+    const engagementText = typeof score === 'number'
+      ? `Использование приложения: ${engagementLabel(score)} (${Math.round(score)}%). Даже короткие записи помогают видеть общую картину.`
+      : 'По использованию пока мало данных, но вы можете продолжать в комфортном темпе.';
+
+    const growthText = baby?.weight || baby?.height
+      ? `Данные малыша: ${baby?.weight ? `вес ${baby.weight}` : 'вес пока не указан'}, ${baby?.height ? `рост ${baby.height}` : 'рост пока не указан'}.`
+      : 'По росту и весу пока мало данных. Как только добавите измерения, я помогу видеть динамику.';
+
+    await bot.sendMessage(row.chat_id, `🌿 Итоги недели. Ты проделала большую работу 💛
+
+1) Настроение мамы:
+${moodText}
+
+2) Использование приложения:
+${engagementText}
+
+3) Достижения малыша:
+${growthText}
+Регулярность сна, кормлений и подгузников становится заметнее, когда записей чуть больше.
+
+Ты делаешь всё возможное и даже больше 💛 Я рядом 🌷`);
+  }
+}
+
+async function checkWellbeingRoutines(now, currentMinute) {
+  const hhmm = now.toTimeString().slice(0,5);
+  const day = now.getDay();
+  if (hhmm !== '19:00') return;
+
+  await ensureMomMoodTable();
+
+  if (day === 0) {
+    await sendWeeklyReport(now);
+  }
+
+  await sendDailyMoodCheckin(now);
+}
+
 // Запускаем проверку каждую минуту
 if (supabase) {
   setInterval(checkAndSendNotifications, 60000);
@@ -501,7 +639,74 @@ if (supabase) {
 const MAIN_MENU_BUTTON = '➕ Добавить активность';
 const HOME_MENU_BUTTON = '🏠 Главное меню';
 const ACTIVE_TIMERS_BUTTON = '⏱ Запущенные активности';
-const OPEN_APP_BUTTON = '📊 Открыть приложение';
+const OPEN_APP_BUTTON = '📱 Открыть приложение';
+const BOT_INSTRUCTION_BUTTON = '📖 Инструкция по боту';
+const APP_REVIEW_BUTTON = '🎥 Обзор приложения';
+const FEEDBACK_BUTTON = '💌 Оставить обратную связь';
+
+const BOT_TEXTS = {
+  startUnregistered: `👋 Добро пожаловать в «Дневник малыша».
+
+Я помогу бережно отслеживать режим малыша, а вам — чувствовать больше спокойствия и опоры каждый день 💛
+
+Что сделать дальше:
+1) Откройте приложение
+2) Добавьте имя и дату рождения малыша
+3) Вернитесь в Telegram и нажмите «Проверить статус»`,
+  details: `🌿 Как это помогает каждый день:
+• легче держать интервалы кормлений
+• понятнее становится режим сна
+• умные уведомления подсказывают вовремя
+• удобно фиксировать рост и вес
+• видеть статистику и сравнение с другими детьми
+• меньше тревоги, больше уверенности у мамы
+
+Роли разделены так:
+Telegram — быстрые команды, таймеры, напоминания.
+Приложение — статистика, история, настройки и профиль малыша.
+
+🎥 В приложении есть видео-обзор, чтобы быстро разобраться в возможностях.`,
+  registrationMissing: `Пока профиль малыша не найден 🌷
+
+Сделайте три шага:
+1) Откройте приложение
+2) Заполните имя и дату рождения малыша
+3) Вернитесь сюда и снова нажмите «Проверить статус»`,
+  registrationSuccess: `🎉 Отлично, всё готово!
+
+Профиль малыша успешно подключён.
+Теперь в боте можно быстро добавлять активности, запускать и останавливать таймеры, а также получать напоминания 💛`,
+  instruction: `📖 Инструкция по боту
+
+➕ Добавить активность
+Выберите нужную активность и сразу сохраните запись или запустите таймер.
+
+⏱ Запущенные активности
+Здесь видно таймеры, которые идут прямо сейчас, и их можно остановить.
+
+🏠 Главное меню
+Открывает полезные разделы: инструкцию, обзор приложения и обратную связь.
+
+📱 Открыть приложение
+Переход к полной истории, статистике, профилю малыша и настройкам.
+
+🔔 Уведомления
+Работают по времени и по интервалу между активностями.
+
+⚠️ Про таймеры:
+• Таймеры в Telegram и в приложении НЕЗАВИСИМЫ
+• Таймер, запущенный в Telegram, виден только в боте
+• Таймер, запущенный в приложении, виден только в приложении
+• После остановки таймера запись сохраняется в приложении
+• В приложении сохранённую активность можно отредактировать или удалить`,
+  homeMenu: `🌸 Главное меню
+
+• 80% мам отмечают, что чувствуют себя спокойнее
+• Мамы реже забывают про кормления и режим
+• Режим малыша становится понятнее уже через несколько дней
+
+Ты большая молодец. Я рядом 💛`,
+};
 const QUICK_ACTIVITIES = {
   breastfeeding: '🤱 Кормление грудью',
   bottle: '🍼 Бутылочка',
@@ -523,6 +728,12 @@ const FSM_STATE = {
 const userSessions = new Map();
 const botActiveTimers = new Map();
 const trackedChats = new Set();
+const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID ? Number(process.env.ADMIN_CHAT_ID) : null;
+const moodPromptState = new Map();
+const moodLabels = { calm: '😊 Спокойно', normal: '😌 Нормально', tired: '😴 Устала', anxious: '😔 Тревожно', hard: '😭 Очень тяжело' };
+const feedbackState = new Set();
+const firstActivityCache = new Set();
+
 
 function isUuid(value) {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value || ''));
@@ -563,12 +774,61 @@ function quickActivitiesKeyboard() {
   };
 }
 
-async function sendMainMenuMessage(chatId) {
-  return bot.sendMessage(chatId, `👋 Привет! Это трекер малыша.
+function getHomeMenuInlineKeyboard() {
+  return {
+    inline_keyboard: [
+      [{ text: BOT_INSTRUCTION_BUTTON, callback_data: 'home:instruction' }],
+      [{ text: APP_REVIEW_BUTTON, callback_data: 'home:review' }],
+      [{ text: FEEDBACK_BUTTON, callback_data: 'home:feedback' }],
+    ],
+  };
+}
 
-Используйте нижнее меню для быстрых действий.`, {
+async function sendMainMenuMessage(chatId) {
+  return bot.sendMessage(chatId, BOT_TEXTS.homeMenu, {
+    reply_markup: getHomeMenuInlineKeyboard(),
+  });
+}
+
+async function sendBotInstruction(chatId) {
+  return bot.sendMessage(chatId, BOT_TEXTS.instruction, {
     reply_markup: getMainMenuKeyboard(),
   });
+}
+
+async function hasAnyActivity(babyId) {
+  const { count, error } = await supabase
+    .from('activities')
+    .select('id', { head: true, count: 'exact' })
+    .eq('baby_id', babyId);
+  if (error) {
+    console.error('Ошибка проверки первой активности:', error);
+    return false;
+  }
+  return (count || 0) > 0;
+}
+
+async function getFirstActivityState(context) {
+  if (!context?.babyId) return false;
+  if (firstActivityCache.has(context.babyId)) return false;
+
+  const exists = await hasAnyActivity(context.babyId);
+  if (exists) {
+    firstActivityCache.add(context.babyId);
+    return false;
+  }
+
+  // Резервируем «первую активность» сразу, чтобы при параллельных действиях
+  // поздравление не отправлялось несколько раз.
+  firstActivityCache.add(context.babyId);
+  return true;
+}
+
+function getTimerReminderText(type) {
+  if (type === 'sleep') {
+    return '😴 Таймер сна запущен. Когда малыш проснётся, остановите таймер именно в Telegram, чтобы запись сохранилась корректно.';
+  }
+  return '🤱 Таймер кормления запущен. Когда закончите, остановите таймер именно в Telegram, чтобы всё сохранилось корректно.';
 }
 
 function timerKey(timer) {
@@ -580,16 +840,16 @@ function toDurationSec(startIso, endIso = new Date().toISOString()) {
 }
 
 function formatTimersForMenu(timers) {
-  if (!timers.length) return 'Активных таймеров нет.';
+  if (!timers.length) return 'Сейчас запущенных таймеров нет.';
   const lines = timers.map((timer) => {
     const sec = toDurationSec(timer.start_time || timer.startTime);
     const min = Math.max(1, Math.floor(sec / 60));
     if (timer.type === 'breastfeeding') {
       const side = timer.side === 'left' ? 'левая' : 'правая';
-      return `• 🤱 ${side} (${min} мин)`;
+      return `🤱 ${side === 'левая' ? 'Левая грудь' : 'Правая грудь'} — ${min} мин`;
     }
-    if (timer.type === 'sleep') return `• 😴 сон (${min} мин)`;
-    return `• ${timer.type} (${min} мин)`;
+    if (timer.type === 'sleep') return `😴 Сон — ${min} мин`;
+    return `⏱ ${timer.type} — ${min} мин`;
   });
   return `Активные таймеры:\n${lines.join('\n')}`;
 }
@@ -737,7 +997,7 @@ async function refreshActiveTimersFromWeb(context) {
 
 async function showQuickMenu(chatId, context) {
   const timers = await refreshActiveTimersFromWeb(context);
-  await bot.sendMessage(chatId, `Выберите активность.\n${formatTimersForMenu(timers)}`, {
+  await bot.sendMessage(chatId, `Выберите активность 👇\n\n${formatTimersForMenu(timers)}`, {
     reply_markup: quickActivitiesKeyboard(),
   });
 }
@@ -746,7 +1006,7 @@ async function showActiveTimersMenu(chatId, context) {
   const timers = await refreshActiveTimersFromWeb(context);
 
   if (!timers.length) {
-    return bot.sendMessage(chatId, 'Сейчас нет запущенных активностей.', {
+    return bot.sendMessage(chatId, 'Сейчас нет запущенных активностей. Вы можете запустить новую через «➕ Добавить активность».', {
       reply_markup: quickActivitiesKeyboard(),
     });
   }
@@ -768,7 +1028,7 @@ async function ensureContextOrHelp(chatId, context) {
   }
   if (!context?.appUserId || !context?.babyId) {
     await bot.sendMessage(chatId, 'Не нашёл профиль малыша. Откройте веб-приложение и войдите в аккаунт.', {
-      reply_markup: { inline_keyboard: [[{ text: '📊 Открыть приложение', web_app: { url: WEB_APP_URL } }]] },
+      reply_markup: { inline_keyboard: [[{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]] },
     });
     return false;
   }
@@ -867,7 +1127,7 @@ async function handleQuickActivitySelect(query, activity) {
 
   if (activity === 'breastfeeding') {
     setSessionState(chatId, FSM_STATE.WAIT_BREAST_SIDE, { context });
-    return bot.sendMessage(chatId, 'Выберите грудь:', {
+    return bot.sendMessage(chatId, 'Выберите сторону для кормления 👇', {
       reply_markup: {
         inline_keyboard: [[
           { text: '⬅️ Левая', callback_data: 'qa:breast:left' },
@@ -878,6 +1138,7 @@ async function handleQuickActivitySelect(query, activity) {
   }
 
   if (activity === 'sleep') {
+    const isFirst = await getFirstActivityState(context);
     const started = await startTimer(context, 'sleep');
     if (started.alreadyRunning) {
       setSessionState(chatId, FSM_STATE.WAIT_STOP_CONFIRM, { context, type: 'sleep' });
@@ -891,12 +1152,12 @@ async function handleQuickActivitySelect(query, activity) {
       });
     }
     setSessionState(chatId, FSM_STATE.IDLE, { context });
-    return bot.sendMessage(chatId, 'Сон запущен.', { reply_markup: getMainMenuKeyboard() });
+    return bot.sendMessage(chatId, `${getTimerReminderText('sleep')}\n\n${isFirst ? '🎉 Поздравляю с первой активностью! Все запущенные таймеры вы всегда увидите в разделе «⏱ Запущенные активности».': ''}`.trim(), { reply_markup: getMainMenuKeyboard() });
   }
 
   if (activity === 'bottle') {
     setSessionState(chatId, FSM_STATE.WAIT_BOTTLE_AMOUNT, { context });
-    return bot.sendMessage(chatId, 'Введите объём в мл (например, 120):');
+    return bot.sendMessage(chatId, 'Введите объём бутылочки в мл (например, 120):');
   }
 
   if (activity === 'diaper') {
@@ -915,6 +1176,7 @@ async function handleQuickActivitySelect(query, activity) {
   }
 
   if (activity === 'bath') {
+    const isFirst = await getFirstActivityState(context);
     await createActivityRow(context.babyId, {
       type: 'bath',
       start_time: new Date().toISOString(),
@@ -922,7 +1184,7 @@ async function handleQuickActivitySelect(query, activity) {
       comment: 'quick_add:telegram',
     });
     setSessionState(chatId, FSM_STATE.IDLE, { context });
-    return bot.sendMessage(chatId, 'Купание сохранено.', { reply_markup: getMainMenuKeyboard() });
+    return bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Купание успешно добавлено 💛`, { reply_markup: getMainMenuKeyboard() });
   }
 }
 
@@ -938,8 +1200,7 @@ bot.onText(/\/start/, async (msg) => {
 
   if (!supabase) {
     await bot.sendMessage(chatId,
-      '👋 Добро пожаловать в «Дневник малыша»!\n\n' +
-      'Откройте приложение, чтобы начать вести записи.',
+      BOT_TEXTS.startUnregistered,
       { reply_markup: getStartInlineKeyboard() }
     );
     return;
@@ -967,8 +1228,7 @@ bot.onText(/\/start/, async (msg) => {
 
   if (!registered) {
     await bot.sendMessage(chatId,
-      '👋 Добро пожаловать в «Дневник малыша»!\n\n' +
-      'Если вы заходите впервые, просто откройте приложение — аккаунт будет создан автоматически и привяжется к Telegram.',
+      BOT_TEXTS.startUnregistered,
       { reply_markup: getStartInlineKeyboard() }
     );
     return;
@@ -1058,7 +1318,6 @@ bot.onText(/\/skip/, async (msg) => {
 
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
-
   const telegramUserId = query.from.id;
 
   if (query.data === 'show_features') {
@@ -1067,33 +1326,56 @@ bot.on('callback_query', async (query) => {
     return;
   }
 
-  if (query.data === 'start_registration') {
+  if (query.data === 'back_to_start') {
     await bot.answerCallbackQuery(query.id);
-    await bot.sendMessage(chatId,
-      'Создание аккаунта доступно только в приложении.',
-      { reply_markup: getStartInlineKeyboard() }
-    );
+    await bot.sendMessage(chatId, BOT_TEXTS.startUnregistered, { reply_markup: getStartInlineKeyboard() });
     return;
   }
 
   if (query.data === 'check_registration') {
     await bot.answerCallbackQuery(query.id);
+    await sendRegistrationStatus(chatId, telegramUserId);
+    return;
+  }
 
-    const { registered } = await isUserRegistered(telegramUserId);
-    if (registered) {
-      await bot.sendMessage(chatId, '✅ Аккаунт найден. Продолжаем 👇', {
-        reply_markup: getMainMenuKeyboard(),
-      });
-      await sendMainMenuMessage(chatId);
+  if (query.data?.startsWith('home:')) {
+    await bot.answerCallbackQuery(query.id);
+    const action = query.data.split(':')[1];
+
+    if (action === 'instruction') {
+      await sendBotInstruction(chatId);
       return;
     }
 
-    await bot.sendMessage(chatId,
-      'Аккаунт пока не найден.\n' +
-      'Откройте приложение и создайте аккаунт.', {
+    if (action === 'review') {
+      await bot.sendMessage(chatId, '🎥 Обзор приложения доступен в приложении. Нажмите кнопку ниже, чтобы посмотреть его в удобное время.', {
+        reply_markup: { inline_keyboard: [[{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]] },
+      });
+      return;
+    }
+
+    if (action === 'feedback') {
+      feedbackState.add(chatId);
+      await bot.sendMessage(chatId, '💌 Введите текстом своё предложение. Я обязательно передам его команде.', {
+        reply_markup: getMainMenuKeyboard(),
+      });
+      return;
+    }
+  }
+
+  if (query.data?.startsWith('mood:')) {
+    await bot.answerCallbackQuery(query.id);
+    const mood = query.data.split(':')[1];
+    const context = await getContext(query);
+    if (!context?.appUserId) {
+      await bot.sendMessage(chatId, 'Спасибо за ответ 💛 Чтобы сохранять чек-ин, сначала подключите профиль через приложение.', {
         reply_markup: getStartInlineKeyboard(),
-      }
-    );
+      });
+      return;
+    }
+    await saveMomMood(context.appUserId, mood);
+    moodPromptState.set(chatId, `${chatId}:${new Date().toISOString().slice(0, 10)}`);
+    await bot.sendMessage(chatId, 'Спасибо, что поделились состоянием. Вы очень важны 💛');
     return;
   }
 
@@ -1102,18 +1384,14 @@ bot.on('callback_query', async (query) => {
   if (!registered && query.data?.startsWith('qa:')) {
     await bot.answerCallbackQuery(query.id, {
       text: '⚠️ Сначала создайте аккаунт в приложении.',
-      show_alert: true
+      show_alert: true,
     });
 
-    await bot.sendMessage(chatId,
-      'Чтобы продолжить, откройте приложение:', {
-        reply_markup: getStartInlineKeyboard(),
-      }
-    );
+    await bot.sendMessage(chatId, 'Чтобы продолжить, откройте приложение:', {
+      reply_markup: getStartInlineKeyboard(),
+    });
     return;
   }
-
-  // ДАЛЬШЕ ВАШ СУЩЕСТВУЮЩИЙ КОД
 
   if (query.data?.startsWith('qa:')) {
     await bot.answerCallbackQuery(query.id);
@@ -1145,6 +1423,7 @@ bot.on('callback_query', async (query) => {
       if (!(await ensureContextOrHelp(chatId, context))) return;
 
       const side = value;
+      const isFirst = await getFirstActivityState(context);
       const started = await startTimer(context, 'breastfeeding', side);
       if (started.alreadyRunning) {
         return bot.sendMessage(chatId, 'Кормление уже идёт. Остановить текущее?', {
@@ -1158,7 +1437,9 @@ bot.on('callback_query', async (query) => {
       }
 
       setSessionState(chatId, FSM_STATE.IDLE, { context });
-      return bot.sendMessage(chatId, `Кормление (${side === 'left' ? 'левая' : 'правая'} грудь) запущено.`, {
+        return bot.sendMessage(chatId, `${getTimerReminderText('breastfeeding')}
+
+${isFirst ? '🎉 Поздравляю с первой активностью! Все запущенные таймеры видны в разделе «⏱ Запущенные активности».': `Запустила: ${side === 'left' ? 'левая' : 'правая'} грудь.`}`.trim(), {
         reply_markup: getMainMenuKeyboard(),
       });
     }
@@ -1179,46 +1460,6 @@ bot.on('callback_query', async (query) => {
       setSessionState(chatId, FSM_STATE.IDLE, { context });
       return showQuickMenu(chatId, context);
     }
-
-    return;
-  }
-  
-  if (query.data === 'help') {
-    bot.answerCallbackQuery(query.id);
-    bot.sendMessage(chatId, `
-📖 **Быстрая помощь**
-
-Используйте приложение для отслеживания активностей малыша.
-
-Все функции доступны в приложении! 👇
-    `.trim(), {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🚀 Открыть приложение', web_app: { url: WEB_APP_URL } }
-        ]]
-      }
-    });
-  } else if (query.data === 'about') {
-    bot.answerCallbackQuery(query.id);
-    bot.sendMessage(chatId, `
-👶 **Трекер малыша v2.0**
-
-Современное приложение для родителей с:
-• Отслеживанием активностей
-• Статистикой и графиками
-• Умными напоминаниями (время + интервалы!)
-• Облачным хранением данных
-
-Сделано с ❤️
-    `.trim(), {
-      parse_mode: 'Markdown',
-      reply_markup: {
-        inline_keyboard: [[
-          { text: '🚀 Открыть приложение', web_app: { url: WEB_APP_URL } }
-        ]]
-      }
-    });
   }
 });
 
@@ -1229,16 +1470,28 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const telegramUserId = msg.from.id;
 
-  if (msg.text === '✅ Проверить аккаунт' || msg.text === '🔄 Обновить статус') {
+  if (msg.text === '✅ Проверить аккаунт' || msg.text === '🔄 Обновить статус' || msg.text === '🔄 Проверить статус') {
     await sendRegistrationStatus(chatId, telegramUserId);
+    return;
+  }
+
+
+  if (feedbackState.has(chatId) && msg.text) {
+    feedbackState.delete(chatId);
+    if (ADMIN_CHAT_ID) {
+      await bot.sendMessage(ADMIN_CHAT_ID, `💌 Новая обратная связь от @${msg.from.username || 'без username'} (chat_id: ${chatId}):
+
+${msg.text}`);
+    }
+    await bot.sendMessage(chatId, 'Спасибо, передали 💛', { reply_markup: getMainMenuKeyboard() });
     return;
   }
 
   const { registered } = await isUserRegistered(telegramUserId);
   if (!registered) {
     await bot.sendMessage(chatId,
-      'У вас пока нет подключённого аккаунта.\nНажмите кнопку ниже после регистрации в приложении.',
-      { reply_markup: getStartInlineKeyboard() }
+      BOT_TEXTS.registrationMissing,
+      { reply_markup: getStatusRetryInlineKeyboard() }
     );
     return;
   }
@@ -1270,6 +1523,7 @@ bot.on('message', async (msg) => {
       if (!Number.isFinite(amount) || amount <= 0) {
         return bot.sendMessage(chatId, 'Введите объём числом, например 90.');
       }
+      const isFirst = await getFirstActivityState(context);
       await createActivityRow(context.babyId, {
         type: 'bottle',
         amount,
@@ -1277,8 +1531,8 @@ bot.on('message', async (msg) => {
         end_time: new Date().toISOString(),
         comment: 'quick_add:telegram',
       });
-      setSessionState(chatId, FSM_STATE.IDLE, { context });
-      await bot.sendMessage(chatId, `Бутылочка сохранена: ${amount} мл.`, { reply_markup: getMainMenuKeyboard() });
+        setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Бутылочка успешно добавлена 💛`, { reply_markup: getMainMenuKeyboard() });
       return showQuickMenu(chatId, context);
     }
 
@@ -1288,6 +1542,7 @@ bot.on('message', async (msg) => {
       if (!diaperType) {
         return bot.sendMessage(chatId, 'Выберите: Мокрый или Грязный.');
       }
+      const isFirst = await getFirstActivityState(context);
       await createActivityRow(context.babyId, {
         type: 'diaper',
         diaper_type: diaperType,
@@ -1295,8 +1550,8 @@ bot.on('message', async (msg) => {
         end_time: new Date().toISOString(),
         comment: 'quick_add:telegram',
       });
-      setSessionState(chatId, FSM_STATE.IDLE, { context });
-      await bot.sendMessage(chatId, 'Подгузник сохранён.', { reply_markup: getMainMenuKeyboard() });
+        setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Подгузник успешно добавлен 💛`, { reply_markup: getMainMenuKeyboard() });
       return showQuickMenu(chatId, context);
     }
 
@@ -1305,6 +1560,7 @@ bot.on('message', async (msg) => {
       if (!name) {
         return bot.sendMessage(chatId, 'Введите название лекарства.');
       }
+      const isFirst = await getFirstActivityState(context);
       await createActivityRow(context.babyId, {
         type: 'medicine',
         medicine_name: name,
@@ -1312,8 +1568,8 @@ bot.on('message', async (msg) => {
         end_time: new Date().toISOString(),
         comment: 'quick_add:telegram',
       });
-      setSessionState(chatId, FSM_STATE.IDLE, { context });
-      await bot.sendMessage(chatId, `Лекарство «${name}» сохранено.`, { reply_markup: getMainMenuKeyboard() });
+        setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Лекарство успешно добавлено 💛`, { reply_markup: getMainMenuKeyboard() });
       return showQuickMenu(chatId, context);
     }
   } catch (error) {
