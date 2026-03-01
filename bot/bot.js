@@ -641,7 +641,7 @@ const HOME_MENU_BUTTON = '🏠 Главное меню';
 const ACTIVE_TIMERS_BUTTON = '⏱ Запущенные активности';
 const OPEN_APP_BUTTON = '📱 Открыть приложение';
 const BOT_INSTRUCTION_BUTTON = '📖 Инструкция по боту';
-const APP_REVIEW_BUTTON = '🎥 Обзор приложения';
+const APP_REVIEW_BUTTON = '📱 Открыть приложение';
 const FEEDBACK_BUTTON = '💌 Оставить обратную связь';
 
 const BOT_TEXTS = {
@@ -701,9 +701,15 @@ Telegram — быстрые команды, таймеры, напоминани
 • В приложении сохранённую активность можно отредактировать или удалить`,
   homeMenu: `🌸 Главное меню
 
-• 80% мам отмечают, что чувствуют себя спокойнее
-• Мамы реже забывают про кормления и режим
-• Режим малыша становится понятнее уже через несколько дней
+Использую наше приложение, вы сможете легче выстроить спокойный ритм дня и не держать всё в голове 💛
+
+В нашем приложение можно быстро отмечать кормления, сон, подгузники, лекарства, купание и даже свои события — всё в удобном формате, чтобы видеть полную картину развития малыша.
+
+Обрати внимание: регулярные записи помогают замечать закономерности и принимать решения увереннее, особенно в насыщенные дни.
+
+Используй меню под полем ввода сообщения — там есть быстрые кнопки для добавления активности, просмотра запущенных таймеров и перехода в главное меню.
+
+Если у тебя возникли проблемы обратись к нам в поддержку — мы рядом и всегда поможем 🌷
 
 Ты большая молодец. Я рядом 💛`,
 };
@@ -714,6 +720,7 @@ const QUICK_ACTIVITIES = {
   diaper: '👶 Подгузник',
   medicine: '💊 Лекарство',
   bath: '🛁 Купание',
+  custom: '✨ Свое событие',
 };
 
 const FSM_STATE = {
@@ -722,6 +729,8 @@ const FSM_STATE = {
   WAIT_BOTTLE_AMOUNT: 'wait_bottle_amount',
   WAIT_DIAPER_TYPE: 'wait_diaper_type',
   WAIT_MEDICINE_NAME: 'wait_medicine_name',
+  WAIT_CUSTOM_EVENT_NAME: 'wait_custom_event_name',
+  WAIT_CUSTOM_EVENT_COMMENT: 'wait_custom_event_comment',
   WAIT_STOP_CONFIRM: 'wait_stop_confirm',
 };
 
@@ -770,6 +779,7 @@ function quickActivitiesKeyboard() {
       [{ text: QUICK_ACTIVITIES.diaper, callback_data: 'qa:diaper' }],
       [{ text: QUICK_ACTIVITIES.medicine, callback_data: 'qa:medicine' }],
       [{ text: QUICK_ACTIVITIES.bath, callback_data: 'qa:bath' }],
+      [{ text: QUICK_ACTIVITIES.custom, callback_data: 'qa:custom' }],
     ],
   };
 }
@@ -777,6 +787,8 @@ function quickActivitiesKeyboard() {
 function getHomeMenuInlineKeyboard() {
   return {
     inline_keyboard: [
+      [{ text: '➕ Добавить активность', callback_data: 'qa:add_activity' }],
+      [{ text: '⏱ Запущенные активности', callback_data: 'qa:list_active' }],
       [{ text: BOT_INSTRUCTION_BUTTON, callback_data: 'home:instruction' }],
       [{ text: APP_REVIEW_BUTTON, callback_data: 'home:review' }],
       [{ text: FEEDBACK_BUTTON, callback_data: 'home:feedback' }],
@@ -785,7 +797,10 @@ function getHomeMenuInlineKeyboard() {
 }
 
 async function sendMainMenuMessage(chatId) {
-  return bot.sendMessage(chatId, BOT_TEXTS.homeMenu, {
+  await bot.sendMessage(chatId, BOT_TEXTS.homeMenu, {
+    reply_markup: getMainMenuKeyboard(),
+  });
+  return bot.sendMessage(chatId, 'Выберите нужный раздел 👇', {
     reply_markup: getHomeMenuInlineKeyboard(),
   });
 }
@@ -1175,6 +1190,13 @@ async function handleQuickActivitySelect(query, activity) {
     return bot.sendMessage(chatId, 'Введите название лекарства:');
   }
 
+  if (activity === 'custom') {
+    setSessionState(chatId, FSM_STATE.WAIT_CUSTOM_EVENT_NAME, { context });
+    return bot.sendMessage(chatId, `✨ Давайте добавим своё событие.
+
+Шаг 1/2: введите название события (например, «Массаж» или «Игры на коврике»).`);
+  }
+
   if (activity === 'bath') {
     const isFirst = await getFirstActivityState(context);
     await createActivityRow(context.babyId, {
@@ -1348,7 +1370,7 @@ bot.on('callback_query', async (query) => {
     }
 
     if (action === 'review') {
-      await bot.sendMessage(chatId, '🎥 Обзор приложения доступен в приложении. Нажмите кнопку ниже, чтобы посмотреть его в удобное время.', {
+      await bot.sendMessage(chatId, '📱 Открою приложение — там доступен обзор, полная история, статистика и все настройки малыша.', {
         reply_markup: { inline_keyboard: [[{ text: '📱 Открыть приложение', web_app: { url: WEB_APP_URL } }]] },
       });
       return;
@@ -1414,7 +1436,14 @@ bot.on('callback_query', async (query) => {
       return showActiveTimersMenu(chatId, context);
     }
 
-    if (['breastfeeding', 'bottle', 'sleep', 'diaper', 'medicine', 'bath'].includes(action)) {
+    if (action === 'add_activity') {
+      const context = await getContext(query);
+      if (!(await ensureContextOrHelp(chatId, context))) return;
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      return showQuickMenu(chatId, context);
+    }
+
+    if (['breastfeeding', 'bottle', 'sleep', 'diaper', 'medicine', 'bath', 'custom'].includes(action)) {
       return handleQuickActivitySelect(query, action);
     }
 
@@ -1570,6 +1599,44 @@ ${msg.text}`);
       });
         setSessionState(chatId, FSM_STATE.IDLE, { context });
       await bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Лекарство успешно добавлено 💛`, { reply_markup: getMainMenuKeyboard() });
+      return showQuickMenu(chatId, context);
+    }
+
+    if (session.state === FSM_STATE.WAIT_CUSTOM_EVENT_NAME) {
+      const eventName = String(msg.text || '').trim();
+      if (!eventName) {
+        return bot.sendMessage(chatId, 'Введите название события, чтобы продолжить.');
+      }
+      setSessionState(chatId, FSM_STATE.WAIT_CUSTOM_EVENT_COMMENT, { context, customEventName: eventName });
+      return bot.sendMessage(chatId, 'Шаг 2/2: добавьте комментарий к событию (что произошло, детали, настроение и т.д.).');
+    }
+
+    if (session.state === FSM_STATE.WAIT_CUSTOM_EVENT_COMMENT) {
+      const comment = String(msg.text || '').trim();
+      if (!comment) {
+        return bot.sendMessage(chatId, 'Добавьте комментарий, чтобы событие сохранилось полностью.');
+      }
+      const customEventName = String(session.draft?.customEventName || '').trim();
+      if (!customEventName) {
+        setSessionState(chatId, FSM_STATE.IDLE, { context });
+        return bot.sendMessage(chatId, 'Не удалось восстановить название события. Давайте начнём заново через «➕ Добавить активность».', {
+          reply_markup: getMainMenuKeyboard(),
+        });
+      }
+
+      const isFirst = await getFirstActivityState(context);
+      await createActivityRow(context.babyId, {
+        type: 'custom',
+        custom_type: customEventName,
+        start_time: new Date().toISOString(),
+        end_time: new Date().toISOString(),
+        comment: `quick_add:telegram\n${comment}`,
+      });
+
+      setSessionState(chatId, FSM_STATE.IDLE, { context });
+      await bot.sendMessage(chatId, `${isFirst ? '🎉 Поздравляю с первой активностью! Историю и статистику можно посмотреть в приложении.\n\n' : ''}Своё событие «${customEventName}» успешно добавлено 💛`, {
+        reply_markup: getMainMenuKeyboard(),
+      });
       return showQuickMenu(chatId, context);
     }
   } catch (error) {
