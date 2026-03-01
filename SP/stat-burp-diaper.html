@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Отрыжка и Подгузники</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+:root{
+  --bg:#F8F4FF;--surface:#fff;--border:#E2D5FF;
+  --burp:#7C3AED;--burp-soft:#F5F3FF;--burp-mid:#A78BFA;
+  --diaper:#0EA5E9;--diaper-soft:#F0F9FF;
+  --wet:#38BDF8;--poop:#A16207;--poop-soft:#FFFBEB;
+  --text:#180A30;--muted:#7A6CA0;
+  --shadow:0 2px 14px rgba(124,58,237,.07);
+  --err:#EF4444;--ok:#10B981;--warn:#F59E0B;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:20px 16px 60px;max-width:520px;margin:0 auto;}
+.header{text-align:center;margin-bottom:22px;}
+.app-tag{font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;}
+.header h1{font-size:24px;font-weight:800;color:var(--text);}
+.header h1 em{font-style:normal;color:var(--burp);}
+.header h1 span{color:var(--diaper);}
+.week-picker{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:26px;}
+.wbtn{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.2s;}
+.wbtn:hover{border-color:var(--burp);color:var(--burp);}
+.wlabel{font-size:14px;font-weight:600;min-width:185px;text-align:center;}
+.sec-label{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:22px 0 9px 2px;}
+.card{background:var(--surface);border-radius:18px;padding:18px 16px;margin-bottom:13px;box-shadow:var(--shadow);border:1px solid var(--border);}
+.card-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px;}
+.card-title{font-size:14px;font-weight:700;line-height:1.3;}
+.card-emoji{font-size:20px;}
+.card-desc{font-size:11.5px;color:var(--muted);margin-bottom:15px;line-height:1.5;}
+.tip{border:1px solid var(--border);border-radius:11px;padding:9px 12px;margin-top:13px;display:flex;gap:8px;font-size:11px;color:var(--muted);line-height:1.5;}
+.tip.burp-tip{background:var(--burp-soft);}
+.tip.diap-tip{background:var(--diaper-soft);}
+.tip strong{color:var(--text);}
+.alert{border-radius:13px;padding:11px 13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;}
+.alert.warn{background:#FEF3C7;border:1px solid #FDE68A;}
+.alert.good{background:#F0FDF4;border:1px solid #6EE7B7;}
+.alert.info{background:var(--burp-soft);border:1px solid var(--border);}
+.alert.diap{background:var(--diaper-soft);border:1px solid #BAE6FD;}
+.al-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.al-title{font-size:13px;font-weight:700;margin-bottom:2px;}
+.alert.warn .al-title{color:#D97706;}
+.alert.good .al-title{color:var(--ok);}
+.alert.info .al-title{color:var(--burp);}
+.alert.diap .al-title{color:var(--diaper);}
+.al-body{font-size:11.5px;color:var(--muted);line-height:1.4;}
+
+/* big divider */
+.section-divide{display:flex;align-items:center;gap:12px;margin:28px 0 16px;}
+.section-divide-line{flex:1;height:1px;background:var(--border);}
+.section-divide-label{font-size:12px;font-weight:800;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;border-radius:20px;}
+.section-divide-label.burp-lbl{background:var(--burp-soft);color:var(--burp);border:1.5px solid var(--border);}
+.section-divide-label.diap-lbl{background:var(--diaper-soft);color:var(--diaper);border:1.5px solid #BAE6FD;}
+
+/* chip row */
+.chip-row{display:flex;gap:8px;margin-bottom:13px;}
+.chip{flex:1;border-radius:12px;padding:12px 8px;text-align:center;}
+.chip.bp{background:var(--burp-soft);}
+.chip.dp{background:var(--diaper-soft);}
+.chip.pp{background:var(--poop-soft);}
+.chip.rp{background:#FFF1F2;}
+.chip-lbl{font-size:9px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+.chip-val{font-size:19px;font-weight:800;line-height:1;}
+.chip.bp .chip-val{color:var(--burp);}
+.chip.dp .chip-val{color:var(--diaper);}
+.chip.pp .chip-val{color:var(--poop);}
+.chip.rp .chip-val{color:var(--err);}
+.chip-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+
+/* burp after feed dots */
+.burp-feed-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:12px;}
+.bf-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.bf-day{font-size:10px;font-weight:700;color:var(--muted);}
+.bf-dot{width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;}
+.bf-dot.high{background:var(--burp);color:#fff;}
+.bf-dot.mid{background:#DDD6FE;color:var(--burp);}
+.bf-dot.low{background:#EDE9FE;color:#9CA3AF;}
+.bf-label{font-size:9px;color:var(--muted);}
+
+/* diaper type stacked */
+.ch-wrap{position:relative;}
+.h200{height:200px;}
+.h180{height:180px;}
+.h160{height:160px;}
+.legend{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600;}
+.leg-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+
+/* poop color matrix */
+.poop-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.poop-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.poop-day{font-size:10px;font-weight:700;color:var(--muted);}
+.poop-dots{display:flex;flex-direction:column;gap:2px;align-items:center;}
+.poop-dot{width:18px;height:18px;border-radius:50%;border:1.5px solid rgba(0,0,0,.1);}
+.poop-no{font-size:12px;color:#ccc;}
+
+/* timeline dots for burp/diaper */
+.event-timeline{display:flex;flex-direction:column;gap:5px;}
+.ev-row{display:flex;align-items:center;gap:7px;}
+.ev-day{font-size:10px;font-weight:700;color:var(--muted);width:20px;text-align:right;flex-shrink:0;}
+.ev-track{flex:1;height:18px;background:#F3F0FF;border-radius:5px;position:relative;}
+.ev-dot{position:absolute;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:50%;}
+.ev-dot.burp-ev{background:var(--burp);}
+.ev-dot.wet-ev{background:var(--wet);}
+.ev-dot.poop-ev{background:var(--poop);}
+.ev-count{font-size:10px;font-weight:700;color:var(--muted);width:22px;flex-shrink:0;text-align:center;}
+
+/* norm bar */
+.norm-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.norm-day{font-size:10px;font-weight:700;color:var(--muted);width:20px;text-align:right;flex-shrink:0;}
+.norm-track{flex:1;height:12px;border-radius:100px;overflow:hidden;position:relative;}
+.norm-fill{height:100%;border-radius:100px;}
+.norm-fill.wet-ok{background:linear-gradient(90deg,#7DD3FC,#0EA5E9);}
+.norm-fill.wet-low{background:linear-gradient(90deg,#FDE68A,#F59E0B);}
+.norm-fill.wet-high{background:linear-gradient(90deg,#FCA5A5,#EF4444);}
+.norm-val{font-size:10.5px;font-weight:700;width:28px;flex-shrink:0;text-align:right;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="app-tag">Baby Tracker</div>
+  <h1><em>Отрыжка</em> & <span>Подгузники</span></h1>
+</div>
+<div class="week-picker">
+  <button class="wbtn">‹</button>
+  <div class="wlabel">19–25 мая 2025</div>
+  <button class="wbtn">›</button>
+</div>
+
+<div class="sec-label">⚡ Обратите внимание</div>
+<div class="alert warn">
+  <div class="al-icon">💜</div>
+  <div><div class="al-title">Понедельник — мало отрыжек</div>
+  <div class="al-body">Всего 2 из 8 кормлений с отрыжкой. Если малыш был беспокоен — возможно, воздух не вышел.</div></div>
+</div>
+<div class="alert diap">
+  <div class="al-icon">💧</div>
+  <div><div class="al-title">Среда — мало мокрых подгузников</div>
+  <div class="al-body">Только 3 шт. за день. Норма для возраста: 6–8 шт. Следите за гидратацией.</div></div>
+</div>
+
+<!-- ══ ОТРЫЖКА ══════════════════════════════════ -->
+<div class="section-divide">
+  <div class="section-divide-line"></div>
+  <div class="section-divide-label burp-lbl">💜 Отрыжка</div>
+  <div class="section-divide-line"></div>
+</div>
+
+<div class="sec-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сводка по отрыжкам</div><div class="card-emoji">💜</div></div>
+  <div class="card-desc">Сколько раз выходил воздух, насколько быстро после кормления и сколько требовало усилий.</div>
+  <div class="chip-row">
+    <div class="chip bp"><div class="chip-lbl">Всего</div><div class="chip-val">48</div><div class="chip-sub">за неделю</div></div>
+    <div class="chip dp"><div class="chip-lbl">После кормл.</div><div class="chip-val">84%</div><div class="chip-sub">среднее</div></div>
+    <div class="chip pp"><div class="chip-lbl">Avg за кормл.</div><div class="chip-val">1.2</div><div class="chip-sub">отрыжки</div></div>
+  </div>
+</div>
+
+<!-- Burp rate per day -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Отрыжка после каждого кормления</div><div class="card-emoji">📊</div></div>
+  <div class="card-desc">Доля кормлений, после которых была зафиксирована отрыжка. Тёмный — всё отлично.</div>
+  <div class="burp-feed-grid" id="burpGrid"></div>
+  <div class="tip burp-tip"><span>💡</span><span><strong>Зачем отслеживать:</strong> если отрыжка не выходит регулярно — малыш может срыгивать лёжа или быть беспокойным. Полезно сопоставить с настроением.</span></div>
+</div>
+
+<!-- Burp timing after feed -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сколько времени нужно на отрыжку</div><div class="card-emoji">⏱</div></div>
+  <div class="card-desc">Среднее время от конца кормления до выхода воздуха по дням. Норма: до 10 минут.</div>
+  <div class="ch-wrap h160"><canvas id="burpTimeChart"></canvas></div>
+  <div class="tip burp-tip"><span>💡</span><span>Если время растёт — попробуйте другую позу или более длительное похлопывание. Свыше 15 мин — сигнал обсудить с педиатром.</span></div>
+</div>
+
+<!-- Burp events on timeline -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Когда были отрыжки</div><div class="card-emoji">🕐</div></div>
+  <div class="card-desc">Распределение отрыжек по часам суток. Показывает паттерн вместе с кормлениями.</div>
+  <div class="ch-wrap h180"><canvas id="burpHourChart"></canvas></div>
+  <div class="tip burp-tip"><span>💡</span><span>Если отрыжки часто без кормления (например, ночью) — это может быть признаком рефлюкса. Сообщите педиатру.</span></div>
+</div>
+
+<!-- ══ ПОДГУЗНИКИ ═══════════════════════════════ -->
+<div class="section-divide">
+  <div class="section-divide-line"></div>
+  <div class="section-divide-label diap-lbl">💧 Подгузники</div>
+  <div class="section-divide-line"></div>
+</div>
+
+<div class="sec-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сводка по подгузникам</div><div class="card-emoji">🩱</div></div>
+  <div class="card-desc">Общее количество, разбивка по типу, среднее в день.</div>
+  <div class="chip-row">
+    <div class="chip dp"><div class="chip-lbl">Всего</div><div class="chip-val">42</div><div class="chip-sub">за неделю</div></div>
+    <div class="chip dp"><div class="chip-lbl">Мокрых</div><div class="chip-val">30</div><div class="chip-sub">avg 4.3/день</div></div>
+    <div class="chip pp"><div class="chip-lbl">Какашка</div><div class="chip-val">12</div><div class="chip-sub">avg 1.7/день</div></div>
+    <div class="chip rp"><div class="chip-lbl">С раздр.</div><div class="chip-val">2</div><div class="chip-sub">понед., среда</div></div>
+  </div>
+  <div class="tip diap-tip"><span>💡</span><span>Норма для грудного малыша: <strong>6–8 мокрых подгузников</strong> в день — признак хорошей гидратации. Менее 4 — обратить внимание.</span></div>
+</div>
+
+<!-- Daily diaper count bar + norm -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Мокрых подгузников по дням</div><div class="card-emoji">💧</div></div>
+  <div class="card-desc">Индикатор гидратации малыша. Норма — зелёная зона. Жёлтый — следить, красный — реагировать.</div>
+  <div id="wetNormBars"></div>
+  <div style="display:flex;gap:12px;margin-top:10px;flex-wrap:wrap;">
+    <div class="leg-item"><div class="leg-dot" style="background:#0EA5E9"></div>Норма (6–8 шт.)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#F59E0B"></div>Мало (4–5 шт.)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#EF4444"></div>Критично (&lt;4 шт.)</div>
+  </div>
+  <div class="tip diap-tip"><span>💡</span><span>Мало мокрых подгузников в жаркий день или после болезни — первый признак обезвоживания.</span></div>
+</div>
+
+<!-- Stacked type per day -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Состав подгузников по дням</div><div class="card-emoji">📊</div></div>
+  <div class="card-desc">Сколько мокрых и с калом каждый день — и их соотношение.</div>
+  <div class="ch-wrap h200"><canvas id="diaperStackChart"></canvas></div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#38BDF8"></div>Мокрые</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#A16207"></div>Кал</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#FCA5A5"></div>С раздражением</div>
+  </div>
+  <div class="tip diap-tip"><span>💡</span><span>Отсутствие стула более 2–3 дней у малыша на смешанном/искусственном вскармливании — повод проконсультироваться.</span></div>
+</div>
+
+<!-- Poop color -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Цвет стула по дням</div><div class="card-emoji">🎨</div></div>
+  <div class="card-desc">Визуальная история цвета кала. Резкое изменение — повод обратить внимание.</div>
+  <div class="poop-grid" id="poopGrid"></div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">
+    <div class="leg-item"><div class="poop-dot" style="background:#DAA520;width:12px;height:12px"></div>Жёлтый (норма ГВ)</div>
+    <div class="leg-item"><div class="poop-dot" style="background:#8B7355;width:12px;height:12px"></div>Коричневый (норма)</div>
+    <div class="leg-item"><div class="poop-dot" style="background:#556B2F;width:12px;height:12px"></div>Зелёный (возможно ИВ)</div>
+    <div class="leg-item"><div class="poop-dot" style="background:#FF6347;width:12px;height:12px;border:1.5px solid #EF4444"></div>⚠ Красный — к врачу</div>
+  </div>
+  <div class="tip diap-tip"><span>💡</span><span><strong>Тревожные цвета:</strong> белый/серый (проблемы с печенью), ярко-красный (кровь), чёрный (кроме первых дней). При их появлении — срочно к педиатру.</span></div>
+</div>
+
+<!-- Diaper change timing -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Когда меняют подгузник</div><div class="card-emoji">🕐</div></div>
+  <div class="card-desc">Распределение смен по часам суток. Помогает понять ритм и не пропускать.</div>
+  <div class="ch-wrap h180"><canvas id="diaperHourChart"></canvas></div>
+  <div class="tip diap-tip"><span>💡</span><span>Долгий перерыв без смены (>3 ч для маленьких детей) увеличивает риск опрелостей. Ночные смены важно не пропускать в первые месяцы.</span></div>
+</div>
+
+<script>
+const days=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+// burp: {feedings, withBurp, avgTime}
+const burpData=[{f:8,b:2,t:8},{f:7,b:6,t:6},{f:8,b:7,t:7},{f:7,b:6,t:5},{f:8,b:7,t:9},{f:6,b:6,t:6},{f:8,b:7,t:7}];
+// diaper: {wet, poop, rash}
+const diaperData=[
+  {w:7,p:2,r:1,colors:['#DAA520','#8B7355']},
+  {w:7,p:2,r:0,colors:['#DAA520','#8B7355']},
+  {w:3,p:1,r:1,colors:['#8B7355']},
+  {w:6,p:2,r:0,colors:['#DAA520','#556B2F']},
+  {w:6,p:2,r:0,colors:['#DAA520','#DAA520']},
+  {w:7,p:2,r:0,colors:['#DAA520','#8B7355']},
+  {w:6,p:1,r:0,colors:['#DAA520']},
+];
+// hourly distributions
+const burpHours=[0,0,1,0,2,3,4,5,6,5,4,3,5,6,5,4,3,5,6,7,5,4,2,1];
+const diaperHours=[1,0,1,0,0,1,2,3,4,3,4,3,4,3,2,3,4,5,4,3,2,2,1,1];
+
+// Burp grid
+const bg=document.getElementById('burpGrid');
+burpData.forEach((d,i)=>{
+  const col=document.createElement('div'); col.className='bf-col';
+  const dl=document.createElement('div'); dl.className='bf-day'; dl.textContent=days[i];
+  const pct=Math.round(d.b/d.f*100);
+  const dot=document.createElement('div'); dot.className='bf-dot '+(pct>=80?'high':pct>=50?'mid':'low'); dot.textContent=pct+'%';
+  const lbl=document.createElement('div'); lbl.className='bf-label'; lbl.textContent=d.b+'/'+d.f;
+  col.appendChild(dl); col.appendChild(dot); col.appendChild(lbl);
+  bg.appendChild(col);
+});
+
+// Burp time chart
+new Chart(document.getElementById('burpTimeChart'),{
+  type:'bar',
+  data:{labels:days,datasets:[{label:'Мин до отрыжки',data:burpData.map(d=>d.t),backgroundColor:burpData.map(d=>d.t>10?'rgba(239,68,68,0.7)':d.t>7?'rgba(245,158,11,0.7)':'#7C3AED'),borderRadius:8,borderSkipped:false}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{family:'Plus Jakarta Sans',weight:'600',size:11},color:'#7A6CA0'}},y:{grid:{color:'#E2D5FF'},border:{display:false},ticks:{font:{size:10},color:'#7A6CA0',callback:v=>v+' мин'},max:16}}}
+});
+
+// Burp hour chart
+new Chart(document.getElementById('burpHourChart'),{
+  type:'bar',
+  data:{labels:Array.from({length:24},(_,i)=>i+':00'),datasets:[{label:'Отрыжек',data:burpHours,backgroundColor:'rgba(124,58,237,0.6)',borderRadius:4,borderSkipped:false}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:9},color:'#7A6CA0',maxTicksLimit:8}},y:{grid:{color:'#E2D5FF'},border:{display:false},ticks:{font:{size:10},color:'#7A6CA0',stepSize:2}}}}
+});
+
+// Wet norm bars
+const wnContainer=document.getElementById('wetNormBars');
+const normWetMin=6,normWetMax=8;
+diaperData.forEach((d,i)=>{
+  const row=document.createElement('div'); row.className='norm-row';
+  const dl=document.createElement('div'); dl.className='norm-day'; dl.textContent=days[i]; row.appendChild(dl);
+  const track=document.createElement('div'); track.className='norm-track';
+  track.style.background=d.w<4?'#FEE2E2':d.w<normWetMin?'#FEF3C7':'#DBEAFE';
+  const fill=document.createElement('div');
+  const cls=d.w<4?'wet-low':d.w>=normWetMin?'wet-ok':'wet-low';
+  fill.className='norm-fill '+cls;
+  fill.style.width=Math.min(d.w/10*100,100)+'%';
+  track.appendChild(fill);
+  const val=document.createElement('div'); val.className='norm-val'; val.style.color=d.w<4?'#EF4444':d.w<normWetMin?'#D97706':'#0EA5E9'; val.textContent=d.w+' шт'; row.appendChild(track); row.appendChild(val);
+  wnContainer.appendChild(row);
+});
+
+// Diaper stacked
+new Chart(document.getElementById('diaperStackChart'),{
+  type:'bar',
+  data:{labels:days,datasets:[
+    {label:'Мокрые',data:diaperData.map(d=>d.w),backgroundColor:'#38BDF8',borderRadius:{topLeft:0,topRight:0,bottomLeft:6,bottomRight:6},borderSkipped:false,stack:'d'},
+    {label:'Кал',data:diaperData.map(d=>d.p),backgroundColor:'#A16207',stack:'d'},
+    {label:'С раздражением',data:diaperData.map(d=>d.r),backgroundColor:'rgba(239,68,68,0.6)',borderRadius:{topLeft:6,topRight:6,bottomLeft:0,bottomRight:0},borderSkipped:false,stack:'d'},
+  ]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{stacked:true,grid:{display:false},ticks:{font:{family:'Plus Jakarta Sans',weight:'600',size:11},color:'#7A6CA0'}},y:{stacked:true,grid:{color:'#E2D5FF'},border:{display:false},ticks:{font:{size:10},color:'#7A6CA0',stepSize:2}}}}
+});
+
+// Poop colors
+const pg=document.getElementById('poopGrid');
+diaperData.forEach((d,i)=>{
+  const col=document.createElement('div'); col.className='poop-col';
+  const dl=document.createElement('div'); dl.className='poop-day'; dl.textContent=days[i];
+  const dotsWrap=document.createElement('div'); dotsWrap.className='poop-dots';
+  if(d.colors.length===0){const n=document.createElement('div');n.className='poop-no';n.textContent='—';dotsWrap.appendChild(n);}
+  else d.colors.forEach(c=>{const dot=document.createElement('div');dot.className='poop-dot';dot.style.background=c;dot.title=c;dotsWrap.appendChild(dot);});
+  col.appendChild(dl); col.appendChild(dotsWrap);
+  pg.appendChild(col);
+});
+
+// Diaper hour chart
+new Chart(document.getElementById('diaperHourChart'),{
+  type:'bar',
+  data:{labels:Array.from({length:24},(_,i)=>i+':00'),datasets:[{label:'Смен подгузника',data:diaperHours,backgroundColor:'rgba(14,165,233,0.65)',borderRadius:4,borderSkipped:false}]},
+  options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{font:{size:9},color:'#7A6CA0',maxTicksLimit:8}},y:{grid:{color:'#DBEAFE'},border:{display:false},ticks:{font:{size:10},color:'#7A6CA0',stepSize:1}}}}
+});
+</script>
+</body>
+</html>

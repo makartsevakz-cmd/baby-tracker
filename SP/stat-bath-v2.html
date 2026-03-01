@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Купание</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+:root {
+  --bg: #EAF6FB;
+  --surface: #fff;
+  --border: #C8E9F4;
+  --primary: #0891B2;
+  --primary-soft: #E0F5FA;
+  --primary-mid: #67C5DD;
+  --warm: #F59E0B;
+  --warm-soft: #FFFBEB;
+  --text: #0C2836;
+  --muted: #6B9EAD;
+  --shadow: 0 2px 14px rgba(8,145,178,.08);
+  --err: #EF4444;
+  --ok: #10B981;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:20px 16px 60px;max-width:520px;margin:0 auto;}
+.header{text-align:center;margin-bottom:22px;}
+.app-tag{font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;}
+.header h1{font-family:'DM Serif Display',serif;font-size:28px;color:var(--text);}
+.header h1 span{color:var(--primary);}
+.week-picker{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px;}
+.wbtn{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.2s;}
+.wbtn:hover{border-color:var(--primary);color:var(--primary);}
+.wlabel{font-size:14px;font-weight:600;min-width:185px;text-align:center;}
+.sec-label{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:22px 0 9px 2px;}
+.card{background:var(--surface);border-radius:18px;padding:18px 16px;margin-bottom:13px;box-shadow:var(--shadow);border:1px solid var(--border);}
+.card-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px;}
+.card-title{font-size:15px;font-weight:700;line-height:1.3;}
+.card-emoji{font-size:20px;flex-shrink:0;}
+.card-desc{font-size:11.5px;color:var(--muted);margin-bottom:15px;line-height:1.5;}
+.tip{background:#F0FAFE;border:1px solid var(--border);border-radius:11px;padding:9px 12px;margin-top:13px;display:flex;gap:8px;font-size:11px;color:var(--muted);line-height:1.5;}
+.tip strong{color:var(--text);}
+
+/* ── Норматив-баннер (статичный, по возрасту) ── */
+.norm-banner{
+  background:linear-gradient(135deg,#E0F5FA 0%,#F0FAFE 100%);
+  border:1.5px solid var(--primary-mid);
+  border-radius:16px;padding:14px 16px;margin-bottom:18px;
+  display:flex;gap:12px;align-items:flex-start;
+}
+.nb-icon{font-size:22px;flex-shrink:0;}
+.nb-title{font-size:12px;font-weight:700;color:var(--primary);margin-bottom:6px;letter-spacing:.3px;}
+.nb-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;}
+.nb-row{display:flex;align-items:baseline;gap:5px;}
+.nb-label{font-size:11px;color:var(--muted);font-weight:500;}
+.nb-val{font-family:'DM Serif Display',serif;font-size:14px;color:var(--text);}
+.nb-age{font-size:10px;color:var(--primary);background:var(--primary-soft);border-radius:20px;padding:2px 8px;font-weight:700;margin-top:6px;display:inline-block;}
+
+/* stat row */
+.stat-row{display:flex;gap:9px;margin-bottom:12px;}
+.stat-chip{flex:1;border-radius:12px;padding:12px 10px;text-align:center;}
+.stat-chip.blue{background:var(--primary-soft);}
+.stat-chip.warm{background:var(--warm-soft);}
+.stat-chip.green{background:#F0FDF4;}
+.chip-lbl{font-size:9.5px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+.chip-val{font-family:'DM Serif Display',serif;font-size:22px;line-height:1;}
+.blue .chip-val{color:var(--primary);}
+.warm .chip-val{color:var(--warm);}
+.green .chip-val{color:var(--ok);}
+.chip-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+
+/* calendar dots */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.cal-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.cal-day-lbl{font-size:10px;font-weight:700;color:var(--muted);}
+.cal-dot{width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;}
+.cal-dot.done{background:var(--primary);color:#fff;}
+.cal-dot.miss{background:#F0F4F8;color:#B0C4CC;}
+.cal-dot.warn{background:#FEF3C7;color:#D97706;border:1.5px solid #FDE68A;}
+.cal-time{font-size:9px;color:var(--muted);font-weight:500;}
+
+/* duration bars */
+.dur-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.dur-col{display:flex;flex-direction:column;align-items:center;gap:3px;}
+.dur-bar-wrap{width:28px;border-radius:6px;background:#E0F5FA;height:60px;display:flex;align-items:flex-end;overflow:hidden;}
+.dur-bar{width:100%;border-radius:6px;}
+.dur-lbl{font-size:9.5px;font-weight:700;color:var(--muted);}
+.dur-min{font-size:9px;font-weight:700;margin-top:1px;}
+
+/* streak */
+.streak-wrap{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--primary-soft);border-radius:14px;margin-bottom:12px;}
+.streak-num{font-family:'DM Serif Display',serif;font-size:36px;color:var(--primary);line-height:1;flex-shrink:0;}
+.streak-body{flex:1;}
+.streak-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px;}
+.streak-sub{font-size:11px;color:var(--muted);}
+.streak-fire{font-size:28px;flex-shrink:0;}
+
+/* products */
+.products-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;}
+.prod-chip{display:flex;align-items:center;gap:5px;padding:6px 10px;border-radius:20px;font-size:12px;font-weight:600;border:1.5px solid var(--border);background:var(--primary-soft);color:var(--primary);}
+.prod-count{background:var(--primary);color:#fff;border-radius:50%;width:16px;height:16px;font-size:9px;font-weight:800;display:flex;align-items:center;justify-content:center;}
+
+/* chart */
+.ch-wrap{position:relative;}
+.h180{height:180px;}
+.h160{height:160px;}
+.legend{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600;}
+.leg-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+
+/* alert */
+.alert{border-radius:13px;padding:11px 13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;}
+.alert.warn{background:#FEF3C7;border:1px solid #FDE68A;}
+.alert.good{background:#F0FDF4;border:1px solid #6EE7B7;}
+.alert.info{background:var(--primary-soft);border:1px solid var(--border);}
+.al-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.al-title{font-size:13px;font-weight:700;margin-bottom:2px;}
+.alert.warn .al-title{color:#D97706;}
+.alert.good .al-title{color:var(--ok);}
+.alert.info .al-title{color:var(--primary);}
+.al-body{font-size:11.5px;color:var(--muted);line-height:1.4;}
+
+/* consistency score ring */
+.score-wrap{display:flex;align-items:center;gap:18px;margin-bottom:14px;}
+.score-ring{position:relative;width:80px;height:80px;flex-shrink:0;}
+.score-ring canvas{width:80px;height:80px;}
+.score-center{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;}
+.score-num{font-family:'DM Serif Display',serif;font-size:20px;color:var(--primary);display:block;line-height:1;}
+.score-sub-lbl{font-size:8.5px;color:var(--muted);font-weight:600;}
+.score-body{flex:1;}
+.score-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px;}
+.score-desc{font-size:11.5px;color:var(--muted);line-height:1.5;}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="app-tag">Baby Tracker</div>
+  <h1>Статистика <span>купания</span> 🛁</h1>
+</div>
+
+<div class="week-picker">
+  <button class="wbtn">‹</button>
+  <div class="wlabel">19–25 мая 2025</div>
+  <button class="wbtn">›</button>
+</div>
+
+<!-- НОРМАТИВ ПО ВОЗРАСТУ — статичный баннер, не диаграмма -->
+<div class="norm-banner">
+  <div class="nb-icon">🌡️</div>
+  <div>
+    <div class="nb-title">Нормы купания для возраста малыша</div>
+    <div class="nb-grid">
+      <div class="nb-row"><span class="nb-label">Температура воды</span><span class="nb-val">36–38°C</span></div>
+      <div class="nb-row"><span class="nb-label">Длительность</span><span class="nb-val">10–20 мин</span></div>
+      <div class="nb-row"><span class="nb-label">Частота</span><span class="nb-val">ежедневно</span></div>
+      <div class="nb-row"><span class="nb-label">Лучшее время</span><span class="nb-val">19:00–21:00</span></div>
+    </div>
+    <span class="nb-age">👶 6 месяцев</span>
+  </div>
+</div>
+
+<!-- ALERTS -->
+<div class="sec-label">⚡ Обратите внимание</div>
+<div class="alert good">
+  <div class="al-icon">✅</div>
+  <div><div class="al-title">Отличная неделя!</div>
+  <div class="al-body">6 из 7 дней — купание проведено в вечернее окно. Режим стабильный.</div></div>
+</div>
+<div class="alert warn">
+  <div class="al-icon">🕐</div>
+  <div><div class="al-title">Суббота — необычное время</div>
+  <div class="al-body">Купание в 15:30 вместо обычных 20:00–20:30. Это может нарушить ритуал перед сном.</div></div>
+</div>
+
+<!-- BLOCK 1: Streak + summary -->
+<div class="sec-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сводка и стрик</div><div class="card-emoji">🛁</div></div>
+  <div class="card-desc">Регулярность, средняя длительность и текущая серия ежедневных купаний.</div>
+  <div class="streak-wrap">
+    <div class="streak-num">5</div>
+    <div class="streak-body">
+      <div class="streak-title">дней подряд</div>
+      <div class="streak-sub">купание не пропускалось со вторника</div>
+    </div>
+    <div class="streak-fire">🔥</div>
+  </div>
+  <div class="stat-row">
+    <div class="stat-chip blue">
+      <div class="chip-lbl">Купаний</div>
+      <div class="chip-val">6</div>
+      <div class="chip-sub">из 7 дней</div>
+    </div>
+    <div class="stat-chip warm">
+      <div class="chip-lbl">Avg длительность</div>
+      <div class="chip-val">18 мин</div>
+      <div class="chip-sub">норма 10–20</div>
+    </div>
+    <div class="stat-chip green">
+      <div class="chip-lbl">В норм. время</div>
+      <div class="chip-val">5/6</div>
+      <div class="chip-sub">19:00–21:00</div>
+    </div>
+  </div>
+</div>
+
+<!-- BLOCK 2: Calendar -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Купания по дням</div><div class="card-emoji">📅</div></div>
+  <div class="card-desc">Было ли купание каждый день и в какое время. Жёлтый — купание, но не в обычное время.</div>
+  <div class="cal-grid" id="calGrid"></div>
+  <div class="tip"><span>💡</span><span><strong>Ежедневное купание в одно время</strong> — лучший ритуал подготовки ко сну. Малыш начинает понимать: купание = скоро спать.</span></div>
+</div>
+
+<!-- BLOCK 3: Consistency score -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Стабильность времени купания</div><div class="card-emoji">🎯</div></div>
+  <div class="card-desc">Насколько время купания от дня ко дню совпадает. Чем выше — тем стабильнее режим.</div>
+  <div class="score-wrap">
+    <div class="score-ring"><canvas id="scoreRing"></canvas>
+      <div class="score-center"><span class="score-num">83%</span><span class="score-sub-lbl">стабильность</span></div>
+    </div>
+    <div class="score-body">
+      <div class="score-title">Хорошая стабильность</div>
+      <div class="score-desc">5 из 6 купаний прошли в окне ±30 мин от среднего времени (20:22). Суббота выбивается — 15:30.</div>
+    </div>
+  </div>
+  <div class="ch-wrap h180"><canvas id="timeChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>Среднее время купания этой недели — <strong>20:22</strong>. Чем ближе точки друг к другу по вертикали, тем стабильнее режим.</span></div>
+</div>
+
+<!-- BLOCK 4: Duration per day -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Длительность купания по дням</div><div class="card-emoji">⏱</div></div>
+  <div class="card-desc">Сколько минут длилось каждое купание. Норма 10–20 мин для малышей.</div>
+  <div class="dur-grid" id="durGrid"></div>
+  <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:10px;color:var(--muted);font-weight:600;">
+    <span style="color:#38BDF8">&#9632; менее 10 мин</span>
+    <span style="color:var(--primary)">&#9632; норма 10–20 мин</span>
+    <span style="color:#EF4444">&#9632; более 20 мин</span>
+  </div>
+  <div class="tip"><span>💡</span><span>Слишком короткое (&lt;5 мин) не дает малышу расслабиться. Слишком долгое (&gt;25 мин) может переохладить и перевозбудить.</span></div>
+</div>
+
+<!-- BLOCK 5: Products -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Средства для купания</div><div class="card-emoji">🧴</div></div>
+  <div class="card-desc">Что использовали на этой неделе и как часто. Помогает отследить реакцию на новое средство.</div>
+  <div class="products-row" id="productsRow"></div>
+  <div class="ch-wrap h160"><canvas id="productsChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>Если после купания появилось покраснение — сопоставьте с использованным средством по этому графику. Рекомендуется менять средство не чаще раза в 2 недели.</span></div>
+</div>
+
+<script>
+const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+const bathData = [
+  {status:'done', time:'20:15', timeH:20.25, dur:18, products:['Пенка','Шампунь']},
+  {status:'done', time:'20:30', timeH:20.5,  dur:20, products:['Пенка']},
+  {status:'miss', time:null,    timeH:null,   dur:0,  products:[]},
+  {status:'done', time:'20:10', timeH:20.17, dur:17, products:['Пенка','Масло']},
+  {status:'done', time:'20:45', timeH:20.75, dur:15, products:['Пенка']},
+  {status:'warn', time:'15:30', timeH:15.5,  dur:22, products:['Пенка','Шампунь']},
+  {status:'done', time:'20:20', timeH:20.33, dur:19, products:['Пенка']},
+];
+
+// Calendar
+const cg = document.getElementById('calGrid');
+bathData.forEach((d,i) => {
+  const col = document.createElement('div'); col.className = 'cal-col';
+  const dl  = document.createElement('div'); dl.className = 'cal-day-lbl'; dl.textContent = days[i];
+  const dot = document.createElement('div'); dot.className = 'cal-dot ' + d.status;
+  dot.textContent = d.status === 'miss' ? '—' : '✓';
+  const tm  = document.createElement('div'); tm.className = 'cal-time'; tm.textContent = d.time || '';
+  col.appendChild(dl); col.appendChild(dot); col.appendChild(tm);
+  cg.appendChild(col);
+});
+
+// Score ring
+new Chart(document.getElementById('scoreRing'), {
+  type: 'doughnut',
+  data: { datasets: [{ data: [83, 17], backgroundColor: ['#0891B2','#E0F5FA'], borderWidth: 0 }] },
+  options: { responsive: true, maintainAspectRatio: false, cutout: '76%', plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+});
+
+// Time chart (scatter)
+const avgTime = 20.22;
+new Chart(document.getElementById('timeChart'), {
+  type: 'scatter',
+  data: { datasets: [
+    { label:'Время купания', data: bathData.map((d,i) => d.timeH ? {x:d.timeH, y:i} : null).filter(Boolean),
+      backgroundColor: bathData.map(d => d.status==='warn' ? '#F59E0B' : '#0891B2'),
+      pointRadius: 10, pointHoverRadius: 13 },
+    { label:'Среднее', data: [{x:avgTime,y:-0.4},{x:avgTime,y:6.4}],
+      borderColor: 'rgba(8,145,178,0.3)', type:'line', borderDash:[4,4], pointRadius:0, borderWidth:1.5 }
+  ]},
+  options: { responsive:true, maintainAspectRatio:false,
+    plugins: { legend:{display:false}, tooltip:{ callbacks:{ label:c => {
+      const h=Math.floor(c.parsed.x), m=Math.round((c.parsed.x-h)*60);
+      return ` ${days[c.parsed.y]}: ${h}:${m.toString().padStart(2,'0')}`;
+    }}}},
+    scales: {
+      x: { min:14, max:22, grid:{color:'#E0F5FA'}, ticks:{callback:v=>`${v}:00`,stepSize:2,font:{size:10},color:'#6B9EAD'} },
+      y: { ticks:{callback:(_,i)=>days[i]||'',stepSize:1,font:{family:'DM Sans',weight:'600',size:11},color:'#6B9EAD'}, grid:{display:false}, min:-0.5, max:6.5 }
+    }
+  }
+});
+
+// Duration bars
+const dg = document.getElementById('durGrid');
+bathData.forEach((d,i) => {
+  const col = document.createElement('div'); col.className = 'dur-col';
+  const dl  = document.createElement('div'); dl.className = 'dur-lbl'; dl.textContent = days[i];
+  const wrap = document.createElement('div'); wrap.className = 'dur-bar-wrap';
+  const bar  = document.createElement('div'); bar.className = 'dur-bar';
+  bar.style.height = (d.dur ? Math.min(d.dur/25*100,100) : 0) + '%';
+  bar.style.background = !d.dur ? 'transparent' : d.dur<10 ? '#BAE6FD' : d.dur>20 ? '#FCA5A5' : '#0891B2';
+  wrap.appendChild(bar);
+  const val = document.createElement('div'); val.className = 'dur-min';
+  val.style.color = !d.dur ? '#ccc' : d.dur<10 ? '#38BDF8' : d.dur>20 ? '#EF4444' : '#0891B2';
+  val.textContent = d.dur ? d.dur+'м' : '—';
+  col.appendChild(dl); col.appendChild(wrap); col.appendChild(val);
+  dg.appendChild(col);
+});
+
+// Products
+const prodCount = {};
+bathData.forEach(d => d.products.forEach(p => prodCount[p] = (prodCount[p]||0)+1));
+const pr = document.getElementById('productsRow');
+Object.entries(prodCount).forEach(([name,cnt]) => {
+  const chip = document.createElement('div'); chip.className = 'prod-chip';
+  chip.innerHTML = `${name}<span class="prod-count">${cnt}</span>`;
+  pr.appendChild(chip);
+});
+new Chart(document.getElementById('productsChart'), {
+  type: 'bar',
+  data: { labels: Object.keys(prodCount), datasets: [{ data: Object.values(prodCount),
+    backgroundColor: ['#0891B2','#67C5DD','#BAE6FD','#F59E0B'], borderRadius: 8, borderSkipped: false }] },
+  options: { responsive:true, maintainAspectRatio:false,
+    plugins: { legend:{display:false}, tooltip:{callbacks:{label:c=>` Использовано ${c.parsed.y} раз`}} },
+    scales: {
+      x: { grid:{display:false}, ticks:{font:{family:'DM Sans',weight:'600',size:11},color:'#6B9EAD'} },
+      y: { grid:{color:'#E0F5FA'}, border:{display:false}, ticks:{stepSize:1,color:'#6B9EAD',font:{size:10}} }
+    }
+  }
+});
+</script>
+</body>
+</html>
