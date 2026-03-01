@@ -45,6 +45,23 @@ const MetricPill = ({ label, value, color = 'bg-purple-50 text-purple-700' }) =>
   </div>
 );
 
+const FeedingSectionCard = ({ title, emoji, desc, tip, children }) => (
+  <div className="rounded-2xl border border-orange-100 bg-white p-4 shadow-lg">
+    <div className="mb-1 flex items-start justify-between gap-2">
+      <h3 className="text-base font-extrabold text-gray-800">{title}</h3>
+      <div className="text-xl leading-none">{emoji}</div>
+    </div>
+    <p className="mb-4 text-xs leading-relaxed text-gray-500">{desc}</p>
+    {children}
+    {tip ? (
+      <div className="mt-3 flex gap-2 rounded-xl border border-orange-100 bg-orange-50 px-3 py-2">
+        <span className="text-sm">💡</span>
+        <p className="text-[12px] leading-relaxed text-gray-600">{tip}</p>
+      </div>
+    ) : null}
+  </div>
+);
+
 const SingleBarChart = ({ data, valueKey, color, unit }) => {
   const maxValue = Math.max(1, ...data.map((row) => row[valueKey] || 0));
 
@@ -176,23 +193,20 @@ const BottleByDayChart = ({ data }) => {
   const maxValue = Math.max(1, ...data.map((row) => row.bottle));
 
   return (
-    <div className="space-y-3">
-      {data.map((row) => (
-        <div key={row.day}>
-          <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
-            <span>{formatDayLabel(row.day)}</span>
-            <span>{Math.round(row.bottle || 0)} мл</span>
+    <div>
+      <div className="mb-4 flex h-52 items-end justify-between gap-2">
+        {data.map((row, index) => (
+          <div key={row.day} className="flex w-full flex-col items-center">
+            <div className="mb-1 text-[10px] font-bold text-orange-500">{Math.round(row.bottle || 0)}</div>
+            <div className="flex h-44 w-full max-w-10 flex-col-reverse overflow-hidden rounded-md bg-gray-100">
+              <div className="bg-sky-400" style={{ height: `${((row.water || 0) / maxValue) * 100}%` }} />
+              <div className="bg-pink-400" style={{ height: `${((row.breastMilk || 0) / maxValue) * 100}%` }} />
+              <div className="bg-amber-400" style={{ height: `${((row.formula || 0) / maxValue) * 100}%` }} />
+            </div>
+            <div className="mt-2 text-xs font-semibold text-gray-500">{WEEK_DAYS_SHORT[index]}</div>
           </div>
-          <div className="flex h-4 overflow-hidden rounded-lg bg-gray-100">
-            <div className="h-full bg-amber-400" style={{ width: `${((row.formula || 0) / maxValue) * 100}%` }} />
-            <div className="h-full bg-pink-400" style={{ width: `${((row.breastMilk || 0) / maxValue) * 100}%` }} />
-            <div className="h-full bg-sky-400" style={{ width: `${((row.water || 0) / maxValue) * 100}%` }} />
-          </div>
-          <div className="mt-1 text-[11px] text-gray-500">
-            Смесь: {Math.round(row.formula || 0)} мл · Грудное молоко: {Math.round(row.breastMilk || 0)} мл · Вода: {Math.round(row.water || 0)} мл
-          </div>
-        </div>
-      ))}
+        ))}
+      </div>
       <div className="flex flex-wrap gap-3 border-t border-orange-100 pt-3 text-xs text-gray-500">
         <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-amber-400" />Смесь</div>
         <div className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-sm bg-pink-400" />Грудное молоко</div>
@@ -209,6 +223,18 @@ const BreastBalanceChart = ({ data }) => {
   const leftPct = total ? Math.round((leftTotal / total) * 100) : 50;
   const rightPct = total ? 100 - leftPct : 50;
   const maxDaily = Math.max(1, ...data.flatMap((item) => [item.left || 0, item.right || 0]));
+  const chartWidth = 300;
+  const chartHeight = 120;
+  const leftPoints = data.map((row, index) => {
+    const x = (index / Math.max(data.length - 1, 1)) * chartWidth;
+    const y = chartHeight - ((row.left || 0) / maxDaily) * chartHeight;
+    return `${x},${y}`;
+  }).join(' ');
+  const rightPoints = data.map((row, index) => {
+    const x = (index / Math.max(data.length - 1, 1)) * chartWidth;
+    const y = chartHeight - ((row.right || 0) / maxDaily) * chartHeight;
+    return `${x},${y}`;
+  }).join(' ');
 
   return (
     <div>
@@ -235,23 +261,29 @@ const BreastBalanceChart = ({ data }) => {
         <div className="h-full bg-violet-500" style={{ width: `${rightPct}%` }} />
       </div>
 
-      <div className="space-y-2">
-        {data.map((row) => (
-          <div key={row.day}>
-            <div className="mb-1 flex items-center justify-between text-xs text-gray-500">
-              <span>{formatDayLabel(row.day)}</span>
-              <span>{Math.round(row.left || 0)} / {Math.round(row.right || 0)} мин</span>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
-                <div className="h-full rounded-full bg-pink-300" style={{ width: `${((row.left || 0) / maxDaily) * 100}%` }} />
-              </div>
-              <div className="h-2.5 overflow-hidden rounded-full bg-gray-100">
-                <div className="h-full rounded-full bg-violet-400" style={{ width: `${((row.right || 0) / maxDaily) * 100}%` }} />
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="mb-2 overflow-x-auto rounded-xl border border-orange-100 bg-orange-50 p-2">
+        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="h-32 w-full min-w-[280px]">
+          <polyline fill="none" stroke="#f472b6" strokeWidth="3" points={leftPoints} />
+          <polyline fill="none" stroke="#a855f7" strokeWidth="3" points={rightPoints} />
+          {data.map((row, index) => {
+            const x = (index / Math.max(data.length - 1, 1)) * chartWidth;
+            const yLeft = chartHeight - ((row.left || 0) / maxDaily) * chartHeight;
+            const yRight = chartHeight - ((row.right || 0) / maxDaily) * chartHeight;
+            return (
+              <g key={row.day}>
+                <circle cx={x} cy={yLeft} r="3.5" fill="#f472b6" />
+                <circle cx={x} cy={yRight} r="3.5" fill="#a855f7" />
+              </g>
+            );
+          })}
+        </svg>
+        <div className="mt-1 flex justify-between text-[10px] font-semibold text-gray-500">
+          {WEEK_DAYS_SHORT.map((day) => (<span key={day}>{day}</span>))}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-3 text-xs text-gray-500">
+          <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-pink-400" />Левая</div>
+          <div className="flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-full bg-violet-500" />Правая</div>
+        </div>
       </div>
     </div>
   );
@@ -496,29 +528,44 @@ const StatsActivityDetail = ({ selectedType, activities, weekStartDate, onWeekSt
           <MetricPill label="Среднее значение" value={`${Math.round(averageFeedsPerDay)} раз/день`} color="bg-violet-50 text-violet-700" />
         </StatsCard>
 
-        <StatsCard title="Время кормлений по дням">
+        <FeedingSectionCard
+          title="Время кормлений по дням"
+          emoji="🕐"
+          desc="Когда малыш чаще всего просит кушать. Тёмнее — больше кормлений в этот час."
+          tip="Как читать: строки — часы суток (с 0:00 до 23:00), столбцы — дни недели. Самые тёмные клетки — пик кормлений."
+        >
           {feedingHeatmap.maxCount > 0 ? (
             <FeedingHeatmap matrix={feedingHeatmap.matrix} maxCount={feedingHeatmap.maxCount} />
           ) : (
             <EmptyState text="За выбранную неделю нет записей кормлений." />
           )}
-        </StatsCard>
+        </FeedingSectionCard>
 
-        <StatsCard title="Кормление из бутылочки">
+        <FeedingSectionCard
+          title="Кормление из бутылочки"
+          emoji="🍼"
+          desc="Сколько и чего малыш пил из бутылочки каждый день — смесь, грудное молоко, вода."
+          tip="Как читать: высота всего столбца — суммарный объём за день (мл). Цветные сегменты показывают состав."
+        >
           {feedingData.some((item) => item.bottle) ? (
             <BottleByDayChart data={feedingData} />
           ) : (
             <EmptyState text="За 7 дней нет записей по бутылочке." />
           )}
-        </StatsCard>
+        </FeedingSectionCard>
 
-        <StatsCard title="Баланс груди">
+        <FeedingSectionCard
+          title="Баланс груди"
+          emoji="🤱"
+          desc="Сколько времени малыш кормился у каждой груди, чтобы выработка молока оставалась равномерной."
+          tip="Ориентир: разница до 10–15% — обычно нормальна."
+        >
           {feedingData.some((item) => item.left || item.right) ? (
             <BreastBalanceChart data={feedingData} />
           ) : (
             <EmptyState text="За 7 дней нет записей кормления грудью." />
           )}
-        </StatsCard>
+        </FeedingSectionCard>
       </div>
     );
   }
