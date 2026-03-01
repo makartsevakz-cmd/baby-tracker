@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Прогулки</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&display=swap');
+:root{
+  --bg:#F0FBF4;--surface:#fff;--border:#C3EDD4;
+  --primary:#059669;--ps:#ECFDF5;--pm:#6EE7B7;
+  --sky:#0EA5E9;--sky-s:#F0F9FF;
+  --warm:#F59E0B;--warm-s:#FFFBEB;
+  --text:#0A2018;--muted:#5A8A72;
+  --shadow:0 2px 14px rgba(5,150,105,.07);
+  --err:#EF4444;--ok:#059669;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Sora',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:20px 16px 60px;max-width:520px;margin:0 auto;}
+.header{text-align:center;margin-bottom:20px;}
+.app-tag{font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;}
+h1{font-size:24px;font-weight:800;} h1 span{color:var(--primary);}
+.week-picker{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px;}
+.wbtn{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.18s;}
+.wbtn:hover{border-color:var(--primary);color:var(--primary);}
+.wlabel{font-size:14px;font-weight:600;min-width:185px;text-align:center;}
+.sec-label{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:22px 0 9px 2px;}
+.card{background:var(--surface);border-radius:18px;padding:18px 16px;margin-bottom:13px;box-shadow:var(--shadow);border:1px solid var(--border);}
+.card-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px;}
+.card-title{font-size:14px;font-weight:700;}
+.card-emoji{font-size:20px;}
+.card-desc{font-size:11.5px;color:var(--muted);margin-bottom:15px;line-height:1.5;}
+.tip{background:var(--ps);border:1px solid var(--border);border-radius:11px;padding:9px 12px;margin-top:13px;display:flex;gap:8px;font-size:11px;color:var(--muted);line-height:1.5;}
+.tip strong{color:var(--text);}
+
+/* alert */
+.alert{border-radius:13px;padding:11px 13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;}
+.alert.warn{background:#FEF3C7;border:1px solid #FDE68A;}
+.alert.good{background:var(--ps);border:1px solid var(--pm);}
+.al-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.al-title{font-size:13px;font-weight:700;margin-bottom:2px;}
+.alert.warn .al-title{color:#D97706;} .alert.good .al-title{color:var(--ok);}
+.al-body{font-size:11.5px;color:var(--muted);line-height:1.4;}
+
+/* summary chips */
+.bnum-row{display:flex;gap:8px;margin-bottom:13px;}
+.bnum{flex:1;border-radius:13px;padding:13px 10px;text-align:center;}
+.bnum.g{background:var(--ps);} .bnum.s{background:var(--sky-s);} .bnum.w{background:var(--warm-s);}
+.bn-lbl{font-size:9.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+.bn-val{font-size:21px;font-weight:800;line-height:1;}
+.bnum.g .bn-val{color:var(--primary);} .bnum.s .bn-val{color:var(--sky);} .bnum.w .bn-val{color:var(--warm);}
+.bn-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+
+/* goal bar */
+.goal-wrap{margin-bottom:4px;}
+.goal-row{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:4px;}
+.goal-track{height:12px;background:#D1FAE5;border-radius:100px;overflow:hidden;}
+.goal-fill{height:100%;border-radius:100px;background:linear-gradient(90deg,#6EE7B7,#059669);}
+.goal-labels{display:flex;justify-content:space-between;margin-top:3px;font-size:9.5px;color:var(--muted);}
+
+/* walk timeline */
+.tl-hours-row{display:flex;margin-left:28px;margin-bottom:4px;}
+.tl-h-lbl{font-size:9px;color:var(--muted);font-weight:600;flex:1;}
+.tl-row{display:flex;align-items:center;gap:7px;margin-bottom:5px;}
+.tl-day-lbl{font-size:10px;font-weight:700;color:var(--muted);width:20px;text-align:right;flex-shrink:0;}
+.tl-track{flex:1;height:18px;background:#D1FAE5;border-radius:5px;position:relative;overflow:hidden;}
+.tl-seg{position:absolute;top:2px;bottom:2px;border-radius:4px;}
+.tl-seg.w1{background:#059669;} .tl-seg.w2{background:#34D399;} .tl-seg.w3{background:#6EE7B7;}
+.tl-total{font-size:10px;font-weight:700;color:var(--muted);width:34px;flex-shrink:0;}
+
+/* weather cards */
+.wx-week{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}
+.wx-card{display:flex;flex-direction:column;align-items:center;gap:2px;padding:8px 4px;background:var(--ps);border-radius:12px;border:1px solid var(--border);}
+.wx-day{font-size:9.5px;font-weight:700;color:var(--muted);}
+.wx-icon{font-size:18px;line-height:1.2;}
+.wx-temp{font-size:9.5px;font-weight:700;color:var(--text);}
+.wx-wind{font-size:8.5px;color:var(--muted);}
+.wx-dur{font-size:10px;font-weight:800;margin-top:2px;}
+.wx-dur.ok{color:var(--primary);} .wx-dur.short{color:var(--warm);} .wx-dur.none{color:#B0C4CC;}
+.wx-badge{font-size:8px;font-weight:700;padding:1px 5px;border-radius:10px;margin-top:1px;}
+.wx-badge.cold{background:#DBEAFE;color:#1D4ED8;} .wx-badge.hot{background:#FEF3C7;color:#92400E;} .wx-badge.rain{background:#EDE9FE;color:#5B21B6;}
+
+/* auto label */
+.auto-label{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;color:var(--sky);background:var(--sky-s);border:1px solid #BAE6FD;border-radius:20px;padding:3px 9px;margin-bottom:12px;}
+
+.ch-wrap{position:relative;} .h200{height:200px;} .h160{height:160px;}
+.legend{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600;}
+.leg-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="app-tag">Baby Tracker</div>
+  <h1>Статистика <span>прогулок</span> 🌿</h1>
+</div>
+<div class="week-picker">
+  <button class="wbtn">‹</button>
+  <div class="wlabel">19–25 мая 2025</div>
+  <button class="wbtn">›</button>
+</div>
+
+<div class="sec-label">⚡ Обратите внимание</div>
+<div class="alert warn">
+  <div class="al-icon">🌧️</div>
+  <div><div class="al-title">Среда — прогулка короткая из-за дождя</div>
+  <div class="al-body">Всего 20 мин при дожде 15°C. Норма для этого возраста — не менее 1 часа суммарно.</div></div>
+</div>
+<div class="alert good">
+  <div class="al-icon">✅</div>
+  <div><div class="al-title">Недельная норма выполнена</div>
+  <div class="al-body">Суммарно 8 ч 40 мин — цель 7+ ч/нед достигнута.</div></div>
+</div>
+
+<div class="sec-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сводка и цель</div><div class="card-emoji">📊</div></div>
+  <div class="card-desc">Сколько гуляли суммарно и как выполняется недельная норма.</div>
+  <div class="bnum-row">
+    <div class="bnum g"><div class="bn-lbl">Прогулок</div><div class="bn-val">14</div><div class="bn-sub">за неделю</div></div>
+    <div class="bnum s"><div class="bn-lbl">Суммарно</div><div class="bn-val">8 ч 40</div><div class="bn-sub">норма 7+ ч/нед</div></div>
+    <div class="bnum w"><div class="bn-lbl">Avg в день</div><div class="bn-val">1 ч 14</div><div class="bn-sub">норма 1–2 ч</div></div>
+  </div>
+  <div class="goal-wrap">
+    <div class="goal-row"><span>Недельная цель</span><span style="color:var(--primary);font-weight:700">8ч 40м / 7ч</span></div>
+    <div class="goal-track"><div class="goal-fill" style="width:100%"></div></div>
+    <div class="goal-labels"><span>0</span><span>3.5 ч</span><span>7 ч ✓</span></div>
+  </div>
+</div>
+
+<!-- Timeline -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Когда и сколько гуляли</div><div class="card-emoji">🗓</div></div>
+  <div class="card-desc">Каждая полоска — одна прогулка на шкале дня. Видно: сколько прогулок и в какое время.</div>
+  <div id="walkTimeline"></div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:#059669"></div>1-я прогулка</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#34D399"></div>2-я прогулка</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#6EE7B7"></div>3-я прогулка</div>
+  </div>
+  <div class="tip"><span>💡</span><span>Идеально: <strong>2 прогулки в день</strong> — утром (9–11) и после дневного сна (16–18). Насколько строки похожи — настолько стабилен режим.</span></div>
+</div>
+
+<!-- Duration per day -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Суммарное время по дням</div><div class="card-emoji">⏱</div></div>
+  <div class="card-desc">Сколько малыш провёл на улице каждый день. Пунктир — дневная норма.</div>
+  <div class="ch-wrap h200"><canvas id="durChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>Красный столбец — день ниже нормы. Не всегда плохо — бывает из-за дождя или болезни. Важно смотреть на недельную сумму.</span></div>
+</div>
+
+<!-- Weather correlation -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Погода и длина прогулки</div><div class="card-emoji">☀️</div></div>
+  <div class="card-desc">Данные о погоде подтягиваются автоматически по месту проживания из сервиса погоды.</div>
+  <div class="auto-label">🤖 Данные получены автоматически · Москва</div>
+  <div class="wx-week" id="weatherGrid"></div>
+  <div class="tip"><span>💡</span><span>Короткая прогулка в плохую погоду — норма. Следите, чтобы в хорошие дни малыш гулял полноценно. Ветер свыше 15 м/с — лучше остаться дома.</span></div>
+</div>
+
+<!-- First walk timing -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Время первой прогулки</div><div class="card-emoji">🌅</div></div>
+  <div class="card-desc">Во сколько выходили на первую прогулку каждый день. Стабильность = режим.</div>
+  <div class="ch-wrap h160"><canvas id="firstWalkChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>Рекомендованное окно: <strong>9:00–11:00</strong>. Разброс ±30 мин — хорошая стабильность режима.</span></div>
+</div>
+
+<script>
+const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+const walkData = [
+  [{s:9.5,e:11.0},{s:16.5,e:17.8}],
+  [{s:9.3,e:10.8},{s:16.0,e:17.5},{s:18.5,e:19.2}],
+  [{s:10.5,e:11.0}],
+  [{s:9.2,e:11.1},{s:16.5,e:17.5}],
+  [{s:9.5,e:11.0},{s:16.0,e:17.8}],
+  [{s:10.0,e:12.0},{s:15.5,e:17.5}],
+  [{s:9.8,e:11.3},{s:16.5,e:18.0}],
+];
+const dailyTotal = walkData.map(d => d.reduce((s,w) => s+(w.e-w.s), 0));
+
+// weather — в реальном приложении подтягивается из API
+const wx = [
+  {icon:'☀️',temp:'22°C',wind:'5 м/с',badge:null},
+  {icon:'⛅',temp:'20°C',wind:'7 м/с',badge:null},
+  {icon:'🌧',temp:'15°C',wind:'9 м/с',badge:'rain'},
+  {icon:'☀️',temp:'23°C',wind:'4 м/с',badge:null},
+  {icon:'☀️',temp:'24°C',wind:'6 м/с',badge:null},
+  {icon:'🌤',temp:'21°C',wind:'8 м/с',badge:null},
+  {icon:'☀️',temp:'25°C',wind:'5 м/с',badge:null},
+];
+
+// Timeline
+const tlWrap = document.getElementById('walkTimeline');
+const hRow = document.createElement('div'); hRow.className = 'tl-hours-row';
+[6,9,12,15,18,21].forEach(h => { const l=document.createElement('div');l.className='tl-h-lbl';l.textContent=h+':00';hRow.appendChild(l); });
+tlWrap.appendChild(hRow);
+const segCls = ['w1','w2','w3'];
+walkData.forEach((walks, di) => {
+  const row = document.createElement('div'); row.className = 'tl-row';
+  const dl = document.createElement('div'); dl.className = 'tl-day-lbl'; dl.textContent = days[di]; row.appendChild(dl);
+  const track = document.createElement('div'); track.className = 'tl-track';
+  walks.forEach((w,wi) => {
+    const seg = document.createElement('div'); seg.className = 'tl-seg '+segCls[wi];
+    seg.style.left = ((w.s-6)/18*100)+'%'; seg.style.width = ((w.e-w.s)/18*100)+'%';
+    const dur = Math.round((w.e-w.s)*60); seg.title = `${Math.floor(w.s)}:${String(Math.round((w.s%1)*60)).padStart(2,'0')}–${Math.floor(w.e)}:${String(Math.round((w.e%1)*60)).padStart(2,'0')} (${dur} мин)`;
+    track.appendChild(seg);
+  });
+  row.appendChild(track);
+  const h = Math.floor(dailyTotal[di]), m = Math.round((dailyTotal[di]-h)*60);
+  const tot = document.createElement('div'); tot.className = 'tl-total'; tot.textContent = h+'ч'+m+'м'; row.appendChild(tot);
+  tlWrap.appendChild(row);
+});
+
+// Duration chart
+const normDay = 1.0;
+new Chart(document.getElementById('durChart'), {
+  type:'bar',
+  data:{ labels:days, datasets:[{ label:'Часов', data:dailyTotal,
+    backgroundColor:dailyTotal.map(v => v<normDay ? 'rgba(239,68,68,.7)':'#059669'),
+    borderRadius:8, borderSkipped:false }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c => { const v=c.parsed.y,h=Math.floor(v),m=Math.round((v-h)*60); return ` ${h}ч ${m}м`; }}} },
+    scales:{
+      x:{grid:{display:false},ticks:{font:{family:'Sora',weight:'600',size:11},color:'#5A8A72'}},
+      y:{max:3.5,grid:{color:'#D1FAE5'},border:{display:false},ticks:{font:{size:10},color:'#5A8A72',callback:v=>v+'ч'},
+        annotation:{annotations:{norm:{type:'line',yMin:normDay,yMax:normDay,borderColor:'rgba(239,68,68,.5)',borderWidth:1.5,borderDash:[5,4]}}}}
+    }
+  }
+});
+
+// Weather grid
+const wGrid = document.getElementById('weatherGrid');
+wx.forEach((w,i) => {
+  const c = document.createElement('div'); c.className = 'wx-card';
+  const dur = dailyTotal[i];
+  const h = Math.floor(dur), m = Math.round((dur-h)*60);
+  const durClass = dur===0?'none':dur<1?'short':'ok';
+  const durText = dur===0 ? '—' : h+'ч'+m+'м';
+  c.innerHTML = `<div class="wx-day">${days[i]}</div>
+    <div class="wx-icon">${w.icon}</div>
+    <div class="wx-temp">${w.temp}</div>
+    <div class="wx-wind">${w.wind}</div>
+    <div class="wx-dur ${durClass}">${durText}</div>
+    ${w.badge ? `<div class="wx-badge ${w.badge}">${w.badge==='rain'?'дождь':w.badge==='cold'?'холодно':'жарко'}</div>` : ''}`;
+  wGrid.appendChild(c);
+});
+
+// First walk scatter
+const firstTimes = walkData.map(w => w.length ? w[0].s : null);
+new Chart(document.getElementById('firstWalkChart'), {
+  type:'scatter',
+  data:{ datasets:[{ label:'Первая прогулка', data:firstTimes.map((t,i)=>t?{x:t,y:i}:null).filter(Boolean),
+    backgroundColor:'#059669', pointRadius:10, pointHoverRadius:13 }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c => { const h=Math.floor(c.parsed.x),m=Math.round((c.parsed.x-h)*60); return ` ${days[c.parsed.y]}: ${h}:${String(m).padStart(2,'0')}`; }}} },
+    scales:{
+      x:{min:6,max:14,grid:{color:'#D1FAE5'},ticks:{callback:v=>`${v}:00`,stepSize:2,font:{size:10},color:'#5A8A72'}},
+      y:{ticks:{callback:(_,i)=>days[i]||'',stepSize:1,font:{family:'Sora',weight:'600',size:11},color:'#5A8A72'},grid:{display:false},min:-0.5,max:6.5}
+    }
+  }
+});
+</script>
+</body>
+</html>

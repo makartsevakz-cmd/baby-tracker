@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Baby Tracker — Активность</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800;900&display=swap');
+:root{
+  --bg:#FFF8F0;--surface:#fff;--border:#FFE4C4;
+  --primary:#EA580C;--ps:#FFF4ED;--pm:#FB923C;
+  --purple:#7C3AED;--purple-s:#F5F3FF;
+  --sky:#0EA5E9;--sky-s:#F0F9FF;
+  --text:#1C0A00;--muted:#9A6040;
+  --shadow:0 2px 14px rgba(234,88,12,.07);
+  --err:#EF4444;--ok:#10B981;--warn:#F59E0B;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'Outfit',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:20px 16px 60px;max-width:520px;margin:0 auto;}
+.header{text-align:center;margin-bottom:20px;}
+.app-tag{font-size:10px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase;color:var(--muted);margin-bottom:5px;}
+h1{font-size:25px;font-weight:800;} h1 span{color:var(--primary);}
+.week-picker{display:flex;align-items:center;justify-content:center;gap:12px;margin-bottom:18px;}
+.wbtn{width:34px;height:34px;border-radius:50%;border:1.5px solid var(--border);background:var(--surface);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:var(--muted);transition:.18s;}
+.wbtn:hover{border-color:var(--primary);color:var(--primary);}
+.wlabel{font-size:14px;font-weight:600;min-width:185px;text-align:center;}
+.sec-label{font-size:10px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--muted);margin:22px 0 9px 2px;}
+.card{background:var(--surface);border-radius:18px;padding:18px 16px;margin-bottom:13px;box-shadow:var(--shadow);border:1px solid var(--border);}
+.card-hd{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:3px;}
+.card-title{font-size:14px;font-weight:700;}
+.card-emoji{font-size:20px;}
+.card-desc{font-size:11.5px;color:var(--muted);margin-bottom:15px;line-height:1.5;}
+.tip{background:var(--ps);border:1px solid var(--border);border-radius:11px;padding:9px 12px;margin-top:13px;display:flex;gap:8px;font-size:11px;color:var(--muted);line-height:1.5;}
+.tip strong{color:var(--text);}
+.alert{border-radius:13px;padding:11px 13px;display:flex;gap:10px;align-items:flex-start;margin-bottom:10px;}
+.alert.warn{background:#FEF3C7;border:1px solid #FDE68A;}
+.alert.good{background:#F0FDF4;border:1px solid #6EE7B7;}
+.alert.info{background:var(--ps);border:1px solid var(--border);}
+.al-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.al-title{font-size:13px;font-weight:700;margin-bottom:2px;}
+.alert.warn .al-title{color:#D97706;} .alert.good .al-title{color:var(--ok);} .alert.info .al-title{color:var(--primary);}
+.al-body{font-size:11.5px;color:var(--muted);line-height:1.4;}
+
+/* stat chips */
+.chip-row{display:flex;gap:8px;margin-bottom:13px;}
+.chip{flex:1;border-radius:12px;padding:12px 8px;text-align:center;}
+.chip.o{background:var(--ps);} .chip.p{background:var(--purple-s);} .chip.s{background:var(--sky-s);}
+.chip-lbl{font-size:9.5px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+.chip-val{font-size:20px;font-weight:800;line-height:1;}
+.chip.o .chip-val{color:var(--primary);} .chip.p .chip-val{color:var(--purple);} .chip.s .chip-val{color:var(--sky);}
+.chip-sub{font-size:10px;color:var(--muted);margin-top:2px;}
+
+/* 24h daily strip */
+.dt-hours-row{display:flex;margin-left:27px;margin-bottom:4px;}
+.dt-h-lbl{font-size:9px;color:var(--muted);font-weight:600;flex:1;}
+.dt-row{display:flex;align-items:center;gap:6px;margin-bottom:5px;}
+.dt-day{font-size:10px;font-weight:700;color:var(--muted);width:20px;text-align:right;flex-shrink:0;}
+.dt-track{flex:1;height:20px;border-radius:6px;background:#FFF4ED;position:relative;overflow:hidden;}
+.dt-seg{position:absolute;top:0;bottom:0;}
+.dt-seg.sleep{background:#818CF8;opacity:.75;}
+.dt-seg.nap{background:#C4B5FD;opacity:.85;}
+.dt-seg.active{background:var(--primary);}
+.dt-total{font-size:10px;font-weight:700;color:var(--muted);width:34px;flex-shrink:0;}
+
+/* wake window bars */
+.ch-wrap{position:relative;} .h200{height:200px;} .h160{height:160px;} .h220{height:220px;}
+
+/* activity breakdown grid - новый дизайн */
+.act-breakdown{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;}
+.act-card{border-radius:13px;padding:12px 12px;display:flex;align-items:center;gap:10px;border:1.5px solid transparent;}
+.act-icon{font-size:22px;flex-shrink:0;width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;}
+.act-body{flex:1;min-width:0;}
+.act-name{font-size:11.5px;font-weight:700;color:var(--text);margin-bottom:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.act-val{font-size:13px;font-weight:800;line-height:1;}
+.act-pct{font-size:10px;color:var(--muted);}
+.act-bar{height:3px;border-radius:100px;margin-top:4px;background:#eee;}
+.act-bar-fill{height:100%;border-radius:100px;}
+
+/* intervals */
+.int-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+.int-day{font-size:10px;font-weight:700;color:var(--muted);width:20px;text-align:right;flex-shrink:0;}
+.int-track{flex:1;height:12px;border-radius:100px;overflow:hidden;background:#FFE4C4;}
+.int-fill{height:100%;border-radius:100px;}
+.int-fill.ok{background:linear-gradient(90deg,var(--pm),var(--primary));}
+.int-fill.over{background:linear-gradient(90deg,#FCA5A5,#EF4444);}
+.int-fill.under{background:linear-gradient(90deg,#FDE68A,var(--warn));}
+.int-val{font-size:10.5px;font-weight:700;width:36px;flex-shrink:0;text-align:right;}
+.int-val.ok{color:var(--primary);} .int-val.over{color:var(--err);} .int-val.under{color:#D97706;}
+
+.legend{display:flex;flex-wrap:wrap;gap:7px 14px;margin-top:11px;padding-top:11px;border-top:1px solid var(--border);}
+.leg-item{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--muted);font-weight:600;}
+.leg-dot{width:9px;height:9px;border-radius:2px;flex-shrink:0;}
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="app-tag">Baby Tracker</div>
+  <h1>Статистика <span>активности</span> 🌟</h1>
+</div>
+<div class="week-picker">
+  <button class="wbtn">‹</button>
+  <div class="wlabel">19–25 мая 2025</div>
+  <button class="wbtn">›</button>
+</div>
+
+<div class="sec-label">⚡ Обратите внимание</div>
+<div class="alert info">
+  <div class="al-icon">🌟</div>
+  <div><div class="al-title">Окна бодрствования в норме</div>
+  <div class="al-body">Среднее окно бодрствования 2 ч 10 мин. Норма для 6 мес: 2–2.5 ч.</div></div>
+</div>
+<div class="alert warn">
+  <div class="al-icon">😮</div>
+  <div><div class="al-title">Пятница — длинное окно бодрствования</div>
+  <div class="al-body">Одно окно 3 ч 20 мин — малыш перегулял. Засыпание в этот день могло быть трудным.</div></div>
+</div>
+
+<!-- BLOCK 1: Summary -->
+<div class="sec-label">📋 Итоги недели</div>
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сводка бодрствования</div><div class="card-emoji">⏰</div></div>
+  <div class="card-desc">Суммарное время активности, средние и экстремальные окна бодрствования.</div>
+  <div class="chip-row">
+    <div class="chip o"><div class="chip-lbl">Avg бодрств./день</div><div class="chip-val">11 ч</div><div class="chip-sub">норма 10–12 ч</div></div>
+    <div class="chip p"><div class="chip-lbl">Avg 1 окно</div><div class="chip-val">2 ч 10</div><div class="chip-sub">норма 2–2.5 ч</div></div>
+    <div class="chip s"><div class="chip-lbl">Макс. окно</div><div class="chip-val">3 ч 20</div><div class="chip-sub">пятница</div></div>
+  </div>
+</div>
+
+<!-- BLOCK 2: 24h layout -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Сутки: сон и активность</div><div class="card-emoji">🗓</div></div>
+  <div class="card-desc">Полная картина суток: оранжевый — активность, фиолетовый — ночной, лиловый — дневной сон.</div>
+  <div id="dayTimeline"></div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:var(--primary)"></div>Активность</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#818CF8"></div>Ночной сон</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#C4B5FD"></div>Дневной сон</div>
+  </div>
+  <div class="tip"><span>💡</span><span>Хороший паттерн — когда строки похожи. Резкое отличие одного дня — сигнал: прорезывание, болезнь или выезд.</span></div>
+</div>
+
+<!-- BLOCK 3: Wake windows -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Окна бодрствования</div><div class="card-emoji">🔆</div></div>
+  <div class="card-desc">Каждый столбец — одно окно бодрствования между снами. Норма для возраста выделена.</div>
+  <div class="ch-wrap h200"><canvas id="windowChart"></canvas></div>
+  <div class="legend">
+    <div class="leg-item"><div class="leg-dot" style="background:var(--primary)"></div>В норме</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#EF4444"></div>Перегулял (&gt; нормы)</div>
+    <div class="leg-item"><div class="leg-dot" style="background:#F59E0B"></div>Недогулял (&lt; нормы)</div>
+  </div>
+  <div class="tip"><span>💡</span><span><strong>Перегуливание</strong> — малыш перевозбуждён, уложить сложнее. <strong>Недогуливание</strong> — не устал, будет протестовать. Оба случая — сигнал скорректировать режим.</span></div>
+</div>
+
+<!-- BLOCK 4: Activity types breakdown — РАСШИРЕННЫЙ -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Чем занимался во время бодрствования</div><div class="card-emoji">🎯</div></div>
+  <div class="card-desc">Виды активности за неделю. Все типы кроме сна и кормлений — фиксируются мамой или вычисляются из других событий.</div>
+  <div class="act-breakdown" id="actBreakdown"></div>
+  <div class="ch-wrap h220"><canvas id="actChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>Разнообразие активностей важно для развития. Следите, чтобы были и физическая активность (гимнастика, массаж), и сенсорная (музыка, книги), и прогулки.</span></div>
+</div>
+
+<!-- BLOCK 5: Active hours by day -->
+<div class="card">
+  <div class="card-hd"><div class="card-title">Часы бодрствования по дням</div><div class="card-emoji">📈</div></div>
+  <div class="card-desc">Сколько часов малыш бодрствовал каждый день и как это соотносится с нормой.</div>
+  <div class="ch-wrap h160"><canvas id="actDayChart"></canvas></div>
+  <div class="tip"><span>💡</span><span>День значительно ниже нормы — возможно, малыш был болен или очень плохо спал ночью.</span></div>
+</div>
+
+<script>
+const days = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+
+// суточные сегменты [start, end, type]
+const segs = [
+  [{s:0,e:9.5,t:'sleep'},{s:9.5,e:11.5,t:'active'},{s:11.5,e:13.0,t:'nap'},{s:13.0,e:15.5,t:'active'},{s:15.5,e:17.0,t:'nap'},{s:17.0,e:21.0,t:'active'},{s:21.0,e:24,t:'sleep'}],
+  [{s:0,e:9.0,t:'sleep'},{s:9.0,e:11.2,t:'active'},{s:11.2,e:12.8,t:'nap'},{s:12.8,e:15.0,t:'active'},{s:15.0,e:16.5,t:'nap'},{s:16.5,e:21.5,t:'active'},{s:21.5,e:24,t:'sleep'}],
+  [{s:0,e:8.5,t:'sleep'},{s:8.5,e:11.0,t:'active'},{s:11.0,e:12.5,t:'nap'},{s:12.5,e:14.5,t:'active'},{s:14.5,e:16.0,t:'nap'},{s:16.0,e:22.5,t:'active'},{s:22.5,e:24,t:'sleep'}],
+  [{s:0,e:8.8,t:'sleep'},{s:8.8,e:11.0,t:'active'},{s:11.0,e:13.0,t:'nap'},{s:13.0,e:15.0,t:'active'},{s:15.0,e:16.5,t:'nap'},{s:16.5,e:21.0,t:'active'},{s:21.0,e:24,t:'sleep'}],
+  [{s:0,e:9.2,t:'sleep'},{s:9.2,e:12.5,t:'active'},{s:12.5,e:14.0,t:'nap'},{s:14.0,e:16.5,t:'active'},{s:16.5,e:17.5,t:'nap'},{s:17.5,e:21.0,t:'active'},{s:21.0,e:24,t:'sleep'}],
+  [{s:0,e:10.0,t:'sleep'},{s:10.0,e:12.0,t:'active'},{s:12.0,e:13.5,t:'nap'},{s:13.5,e:16.0,t:'active'},{s:16.0,e:17.5,t:'nap'},{s:17.5,e:21.0,t:'active'},{s:21.0,e:24,t:'sleep'}],
+  [{s:0,e:9.5,t:'sleep'},{s:9.5,e:11.5,t:'active'},{s:11.5,e:13.0,t:'nap'},{s:13.0,e:15.0,t:'active'},{s:15.0,e:16.5,t:'nap'},{s:16.5,e:20.5,t:'active'},{s:20.5,e:24,t:'sleep'}],
+];
+
+// 24h day strip
+const dtWrap = document.getElementById('dayTimeline');
+const hr = document.createElement('div'); hr.className = 'dt-hours-row';
+[0,4,8,12,16,20].forEach(h => { const l=document.createElement('div');l.className='dt-h-lbl';l.textContent=h+':00';hr.appendChild(l); });
+dtWrap.appendChild(hr);
+segs.forEach((daySegs, di) => {
+  const row = document.createElement('div'); row.className = 'dt-row';
+  const dl = document.createElement('div'); dl.className = 'dt-day'; dl.textContent = days[di]; row.appendChild(dl);
+  const track = document.createElement('div'); track.className = 'dt-track';
+  daySegs.forEach(seg => {
+    const el = document.createElement('div'); el.className = 'dt-seg '+seg.t;
+    el.style.left = (seg.s/24*100)+'%'; el.style.width = ((seg.e-seg.s)/24*100)+'%';
+    track.appendChild(el);
+  });
+  row.appendChild(track);
+  const activeH = daySegs.filter(s=>s.t==='active').reduce((a,s)=>a+(s.e-s.s),0);
+  const tot = document.createElement('div'); tot.className = 'dt-total';
+  tot.textContent = Math.floor(activeH)+'ч'+Math.round((activeH%1)*60)+'м'; row.appendChild(tot);
+  dtWrap.appendChild(row);
+});
+
+// Wake windows
+const windows = [[2.0,2.5,4.0,2.3],[2.2,2.2,5.0,2.1],[2.5,2.0,6.5],[2.2,2.0,4.5,2.3],[3.3,2.5,3.5],[2.0,2.5,5.0],[2.0,2.0,4.0,2.3]];
+const normMin = 1.5, normMax = 2.5;
+const allW = [], wLabels = [];
+windows.forEach((d,di) => d.forEach((v,wi) => { allW.push(v); wLabels.push(days[di]+' '+(wi+1)); }));
+new Chart(document.getElementById('windowChart'), {
+  type:'bar',
+  data:{ labels:wLabels, datasets:[{ data:allW,
+    backgroundColor:allW.map(v => v>normMax?'#EF4444':v<normMin?'#F59E0B':'#EA580C'),
+    borderRadius:5, borderSkipped:false }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>{ const v=c.parsed.y,h=Math.floor(v),m=Math.round((v-h)*60); return ` ${h}ч ${m}м`; }}} },
+    scales:{
+      x:{grid:{display:false},ticks:{font:{size:9},color:'#9A6040',maxRotation:45}},
+      y:{max:4,grid:{color:'#FFE4C4'},border:{display:false},ticks:{font:{size:10},color:'#9A6040',callback:v=>v+'ч'}}
+    }
+  }
+});
+
+// Activity types — расширенный список для детей до 1 года
+const actTypes = [
+  // Иконка, название, часов за неделю, цвет фона карточки, цвет акцента, цвет бара
+  {icon:'🤸',name:'Гимнастика',val:3.5,  bg:'#FFF4ED',accent:'#EA580C',bar:'#EA580C'},
+  {icon:'🌿',name:'Прогулка',  val:8.7,  bg:'#ECFDF5',accent:'#059669',bar:'#059669'},
+  {icon:'📚',name:'Чтение',    val:5.2,  bg:'#F5F3FF',accent:'#7C3AED',bar:'#7C3AED'},
+  {icon:'🎵',name:'Музыка',    val:4.8,  bg:'#F0F9FF',accent:'#0EA5E9',bar:'#0EA5E9'},
+  {icon:'💆',name:'Массаж',    val:2.1,  bg:'#FFF8E1',accent:'#F59E0B',bar:'#F59E0B'},
+  {icon:'🤲',name:'На руках',  val:12.0, bg:'#FFF1F2',accent:'#F43F5E',bar:'#F43F5E'},
+  {icon:'🧸',name:'Игра с игрушками',val:9.0,bg:'#F0FDF4',accent:'#22C55E',bar:'#22C55E'},
+  {icon:'🛁',name:'Купание',   val:2.1,  bg:'#EFF6FF',accent:'#3B82F6',bar:'#3B82F6'},
+];
+const totalAct = actTypes.reduce((s,a) => s+a.val, 0);
+const ab = document.getElementById('actBreakdown');
+actTypes.forEach(a => {
+  const pct = Math.round(a.val/totalAct*100);
+  const h = Math.floor(a.val), m = Math.round((a.val-h)*60);
+  ab.innerHTML += `<div class="act-card" style="background:${a.bg};border-color:${a.accent}22">
+    <div class="act-icon" style="background:${a.accent}18">${a.icon}</div>
+    <div class="act-body">
+      <div class="act-name">${a.name}</div>
+      <div class="act-val" style="color:${a.accent}">${h}ч ${m}м</div>
+      <div class="act-bar"><div class="act-bar-fill" style="width:${pct}%;background:${a.bar}"></div></div>
+      <div class="act-pct">${pct}% от активности</div>
+    </div>
+  </div>`;
+});
+
+// Horizontal bar chart for activities
+new Chart(document.getElementById('actChart'), {
+  type:'bar',
+  data:{ labels:actTypes.map(a=>a.name), datasets:[{ data:actTypes.map(a=>a.val),
+    backgroundColor:actTypes.map(a=>a.bar), borderRadius:6, borderSkipped:false }] },
+  options:{ indexAxis:'y', responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>{ const v=c.parsed.x,h=Math.floor(v),m=Math.round((v-h)*60); return ` ${h}ч ${m}м`; }}} },
+    scales:{
+      x:{grid:{color:'#FFE4C4'},border:{display:false},ticks:{font:{size:10},color:'#9A6040',callback:v=>v+'ч'}},
+      y:{grid:{display:false},ticks:{font:{family:'Outfit',weight:'600',size:11},color:'#9A6040'}}
+    }
+  }
+});
+
+// Active per day
+const activePerDay = segs.map(d => d.filter(s=>s.t==='active').reduce((a,s)=>a+(s.e-s.s),0));
+new Chart(document.getElementById('actDayChart'), {
+  type:'line',
+  data:{ labels:days, datasets:[{ data:activePerDay,
+    borderColor:'#EA580C', backgroundColor:'rgba(234,88,12,.08)', fill:true,
+    borderWidth:2.5, pointBackgroundColor:activePerDay.map(v=>v<10||v>13?'#EF4444':'#EA580C'),
+    pointRadius:5, tension:0.4 }] },
+  options:{ responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{callbacks:{label:c=>{ const v=c.parsed.y,h=Math.floor(v),m=Math.round((v-h)*60); return ` ${h}ч ${m}м`; }}} },
+    scales:{
+      x:{grid:{display:false},ticks:{font:{family:'Outfit',weight:'600',size:11},color:'#9A6040'}},
+      y:{min:8,max:14,grid:{color:'#FFE4C4'},border:{display:false},ticks:{font:{size:10},color:'#9A6040',callback:v=>v+'ч'}}
+    }
+  }
+});
+</script>
+</body>
+</html>
