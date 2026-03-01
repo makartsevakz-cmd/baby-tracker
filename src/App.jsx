@@ -270,6 +270,10 @@ const ActivityTracker = () => {
       return 'Добавлено через Telegram';
     }
 
+    if (normalized === 'started_from:app_timer') {
+      return 'Запущенная активность ⏰';
+    }
+
     if (normalized === 'side:left' || normalized === 'side:right') {
       return '';
     }
