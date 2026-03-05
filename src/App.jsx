@@ -1267,7 +1267,7 @@ const ActivityTracker = () => {
       activityData.foodType = null;
       activityData.diaperType = null;
       activityData.medicineName = null;
-    } else if (['bath', 'diaper', 'medicine'].includes(formData.type) && !activityData.endTime) {
+    } else if (['bath', 'diaper', 'medicine', 'bottle'].includes(formData.type) && !activityData.endTime) {
       activityData.endTime = activityData.startTime;
     } else if (!activityData.endTime) {
       activityData.endTime = new Date().toISOString();
