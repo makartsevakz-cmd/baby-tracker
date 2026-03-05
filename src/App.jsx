@@ -218,6 +218,18 @@ const ActivityTracker = () => {
     return (hours * 3600) + (minutes * 60) + seconds;
   };
 
+  const isTimerActivity = (type) => ['sleep', 'walk', 'activity'].includes(type);
+
+  const getDurationSecondsFromTimeRange = (startTime, endTime, useNowAsEnd = true) => {
+    const parsedStart = startTime ? new Date(startTime).getTime() : Number.NaN;
+    if (!Number.isFinite(parsedStart)) return 0;
+
+    const parsedEnd = endTime ? new Date(endTime).getTime() : (useNowAsEnd ? Date.now() : Number.NaN);
+    if (!Number.isFinite(parsedEnd)) return 0;
+
+    return Math.max(0, Math.floor((parsedEnd - parsedStart) / 1000));
+  };
+
   const BURP_COMMENT_PREFIX = '[BURP_DATA]';
 
   const serializeBurpComment = (comment, burpData) => {
@@ -1180,7 +1192,8 @@ const ActivityTracker = () => {
     }
 
     if (formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') {
-      const durationSeconds = getTotalDuration(formData.type) || parseDurationInputToSeconds(formData.elapsedDuration);
+      const durationFromRange = getDurationSecondsFromTimeRange(formData.startTime, formData.endTime, !formData.endTime);
+      const durationSeconds = durationFromRange || getTotalDuration(formData.type) || parseDurationInputToSeconds(formData.elapsedDuration);
       if (durationSeconds <= 0) {
         if (tg) tg.HapticFeedback?.notificationOccurred('error');
         alert('Укажите длительность в формате ЧЧ:ММ:СС');
@@ -1213,7 +1226,7 @@ const ActivityTracker = () => {
       const leftDuration = getTotalDuration('left') || parseDurationInputToSeconds(formData.leftElapsedDuration);
       const rightDuration = getTotalDuration('right') || parseDurationInputToSeconds(formData.rightElapsedDuration);
       const totalDuration = leftDuration + rightDuration;
-      const breastfeedingStartTime = timerMeta.breastfeedingStartTime || formData.startTime;
+      const breastfeedingStartTime = editingId ? formData.startTime : (timerMeta.breastfeedingStartTime || formData.startTime);
 
       activityData.leftDuration = leftDuration;
       activityData.rightDuration = rightDuration;
@@ -1233,10 +1246,14 @@ const ActivityTracker = () => {
     } else if (formData.type === 'sleep' || formData.type === 'walk' || formData.type === 'activity') {
       const timerKey = formData.type;
       const hasTimerData = Boolean(timers[timerKey] || pausedTimers[timerKey]);
-      const duration = getTotalDuration(timerKey) || parseDurationInputToSeconds(formData.elapsedDuration);
-      const timerStartTime = hasTimerData ? (timerMeta[`${timerKey}StartTime`] || formData.startTime) : formData.startTime;
+      const durationFromRange = getDurationSecondsFromTimeRange(formData.startTime, formData.endTime, !formData.endTime);
+      const duration = durationFromRange || getTotalDuration(timerKey) || parseDurationInputToSeconds(formData.elapsedDuration);
+      const timerStartTime = formData.startTime || (hasTimerData ? (timerMeta[`${timerKey}StartTime`] || formData.startTime) : formData.startTime);
+      const resolvedEndTime = formData.endTime || new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
+
       activityData.startTime = timerStartTime;
-      activityData.endTime = new Date(new Date(timerStartTime).getTime() + duration * 1000).toISOString();
+      activityData.endTime = resolvedEndTime;
+      activityData.elapsedDuration = formatSeconds(getDurationSecondsFromTimeRange(timerStartTime, resolvedEndTime, false));
 
       if (!editingId && hasTimerData) {
         resetTimer(timerKey);
@@ -1250,7 +1267,7 @@ const ActivityTracker = () => {
       activityData.foodType = null;
       activityData.diaperType = null;
       activityData.medicineName = null;
-    } else if (['bath', 'diaper', 'medicine'].includes(formData.type) && !activityData.endTime) {
+    } else if (['bath', 'diaper', 'medicine', 'bottle'].includes(formData.type) && !activityData.endTime) {
       activityData.endTime = activityData.startTime;
     } else if (!activityData.endTime) {
       activityData.endTime = new Date().toISOString();
@@ -1350,15 +1367,14 @@ const ActivityTracker = () => {
     setEditingId(activity.id);
     setSelectedActivity(activity.type);
     const isDurationBasedActivity = ['sleep', 'walk', 'activity', 'custom'].includes(activity.type);
-    const durationMinutes = (activity.startTime && activity.endTime)
-      ? Math.max(1, Math.round((new Date(activity.endTime) - new Date(activity.startTime)) / 60000))
-      : '';
+    const durationSeconds = getDurationSecondsFromTimeRange(activity.startTime, activity.endTime, false);
+    const durationMinutes = durationSeconds > 0 ? Math.max(1, Math.round(durationSeconds / 60)) : '';
 
     setFormData(
       isDurationBasedActivity
         ? {
           ...activity,
-          elapsedDuration: formatSeconds(durationMinutes * 60),
+          elapsedDuration: formatSeconds(durationSeconds),
           manualDurationMinutes: durationMinutes,
         }
         : {
@@ -1653,7 +1669,7 @@ const ActivityTracker = () => {
     } else {
       setFormData(
         (type === 'sleep' || type === 'walk' || type === 'activity')
-          ? { ...baseData, elapsedDuration: '00:00:00' }
+          ? { ...baseData, elapsedDuration: '00:00:00', endTime: '' }
           : baseData
       );
     }
@@ -1707,6 +1723,7 @@ const ActivityTracker = () => {
         startTime,
         comment: '',
         elapsedDuration: formatSeconds(getTotalDuration(type)),
+        endTime: '',
       });
     }
     
@@ -2031,7 +2048,56 @@ const ActivityTracker = () => {
     setFormData(prev => ({
       ...prev,
       [field]: value,
+      ...(isTimerActivity(timerKey)
+        ? { endTime: new Date(new Date(prev.startTime || new Date().toISOString()).getTime() + seconds * 1000).toISOString() }
+        : {}),
     }));
+  };
+
+  const handleTimerDateChange = (timerKey, field, localValue) => {
+    const isoValue = fromLocalDateTimeString(localValue);
+
+    setFormData(prev => {
+      const nextStart = field === 'startTime' ? isoValue : prev.startTime;
+      let nextEnd = field === 'endTime' ? isoValue : prev.endTime;
+
+      if (nextStart && nextEnd && new Date(nextEnd).getTime() < new Date(nextStart).getTime()) {
+        nextEnd = nextStart;
+      }
+
+      const nextDurationSeconds = getDurationSecondsFromTimeRange(nextStart, nextEnd, true);
+
+      if (!editingId) {
+        setTimers(currentTimers => {
+          const updated = { ...currentTimers };
+          delete updated[timerKey];
+          return updated;
+        });
+
+        setPausedTimers(currentPaused => {
+          const updated = { ...currentPaused };
+          if (nextDurationSeconds > 0) {
+            updated[timerKey] = nextDurationSeconds * 1000;
+          } else {
+            delete updated[timerKey];
+          }
+          return updated;
+        });
+
+        setTimerMeta(currentMeta => ({
+          ...currentMeta,
+          ...(nextStart ? { [`${timerKey}StartTime`]: nextStart } : {}),
+        }));
+      }
+
+      return {
+        ...prev,
+        [field]: isoValue,
+        ...(field === 'startTime' ? { startTime: nextStart } : {}),
+        endTime: nextEnd || '',
+        elapsedDuration: formatSeconds(nextDurationSeconds),
+      };
+    });
   };
 
   // Централизованное обновление настроек пользователя.
@@ -2516,20 +2582,20 @@ const ActivityTracker = () => {
 
               {(selectedActivity === 'sleep' || selectedActivity === 'walk' || selectedActivity === 'activity') && (
                 <div className="space-y-4">
-                  {!editingId && (
-                    <div className="border-2 border-indigo-200 rounded-lg p-4">
-                      <input
-                        type="text"
-                        className="w-full border border-gray-300 rounded-lg p-3 text-center text-2xl font-mono mb-3"
-                        value={timers[selectedActivity] ? formatSeconds(getTotalDuration(selectedActivity)) : (formData.elapsedDuration || '00:00:00')}
-                        onChange={(e) => handleElapsedDurationChange(selectedActivity, 'elapsedDuration', e.target.value)}
-                        placeholder="00:00:00"
-                      />
+                  <div className="border-2 border-indigo-200 rounded-lg p-4">
+                    <input
+                      type="text"
+                      className="w-full border border-gray-300 rounded-lg p-3 text-center text-2xl font-mono mb-3"
+                      value={timers[selectedActivity] ? formatSeconds(getTotalDuration(selectedActivity)) : (formData.elapsedDuration || '00:00:00')}
+                      onChange={(e) => handleElapsedDurationChange(selectedActivity, 'elapsedDuration', e.target.value)}
+                      placeholder="00:00:00"
+                    />
+                    {!editingId && (
                       <button onClick={() => timers[selectedActivity] ? pauseTimer(selectedActivity, selectedActivity) : startTimer(selectedActivity, selectedActivity)} className={`w-full py-3 rounded-lg flex items-center justify-center ${timers[selectedActivity] ? 'bg-red-500 text-white' : 'bg-indigo-500 text-white'}`}>
-                        {timers[selectedActivity] ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер</>}
+                        {timers[selectedActivity] ? <><Pause className="w-5 h-5 mr-2" />Остановить</> : <><Play className="w-5 h-5 mr-2" />Запустить таймер с этой длительности</>}
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
 
                   <div>
                     <label className="block mb-2 font-medium">Время начала:</label>
@@ -2537,7 +2603,17 @@ const ActivityTracker = () => {
                       type="datetime-local"
                       className="w-full border-2 border-gray-200 rounded-lg p-3"
                       value={toLocalDateTimeString(formData.startTime)}
-                      onChange={(e) => setFormData(prev => ({ ...prev, startTime: fromLocalDateTimeString(e.target.value) }))}
+                      onChange={(e) => handleTimerDateChange(selectedActivity, 'startTime', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block mb-2 font-medium">Время окончания (опционально):</label>
+                    <input
+                      type="datetime-local"
+                      className="w-full border-2 border-gray-200 rounded-lg p-3"
+                      value={toLocalDateTimeString(formData.endTime)}
+                      onChange={(e) => handleTimerDateChange(selectedActivity, 'endTime', e.target.value)}
                     />
                   </div>
                 </div>
