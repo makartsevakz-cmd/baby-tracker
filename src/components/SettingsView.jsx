@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowLeft, LogOut, Mail, Globe, Moon, Sun } from 'lucide-react';
+import { ArrowLeft, LogOut, Mail, Globe, Moon, Sun, Eye, EyeOff } from 'lucide-react';
 
 const languageOptions = [
   { value: 'ru', label: 'Русский' },
@@ -45,6 +45,19 @@ const SettingsView = ({
     () => 'bg-white rounded-2xl shadow-lg p-5 space-y-4',
     []
   );
+  
+  // Toggle show/hide password
+  const [showPassword, setShowPassword] = useState({
+    current: false,
+    new: false,
+    confirm: false,
+  });
+  const togglePasswordVisibility = (field) => {
+    setShowPassword((prev) => ({
+      ...prev,
+      [field]: !prev[field],
+    }));
+  };
 
   const handlePasswordSubmit = async (event) => {
     event.preventDefault();
@@ -118,30 +131,57 @@ const SettingsView = ({
           <form onSubmit={handlePasswordSubmit} className="space-y-3">
             <div>
               <label className="block text-sm text-gray-500 mb-1">Текущий пароль</label>
-              <input
-                type="password"
-                value={passwordForm.currentPassword}
-                onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword.current ? 'text' : 'password'}
+                  value={passwordForm.currentPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, currentPassword: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => togglePasswordVisibility('current')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword.current ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-sm text-gray-500 mb-1">Новый пароль</label>
-              <input
-                type="password"
-                value={passwordForm.newPassword}
-                onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword.new ? 'text' : 'password'}
+                  value={passwordForm.newPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, newPassword: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => togglePasswordVisibility('new')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword.new ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
             <div>
               <label className="block text-sm text-gray-500 mb-1">Подтверждение нового пароля</label>
-              <input
-                type="password"
-                value={passwordForm.confirmPassword}
-                onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
-                className="w-full border border-gray-200 rounded-lg px-3 py-2"
-              />
+              <div className="relative">
+                <input
+                  type={showPassword.confirm ? 'text' : 'password'}
+                  value={passwordForm.confirmPassword}
+                  onChange={(e) => setPasswordForm((prev) => ({ ...prev, confirmPassword: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2"
+                />
+                <button
+                  type="button"
+                  onClick={() => togglePasswordVisibility('confirm')}
+                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword.confirm ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                </button>
+              </div>
             </div>
 
             {passwordError && <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{passwordError}</div>}
