@@ -2750,7 +2750,7 @@ const ActivityTracker = () => {
 
               <div>
                 <label className="block mb-2 font-medium">{selectedActivity === 'custom' ? 'Комментарий (опционально):' : 'Комментарий:'}</label>
-                <textarea className="w-full border-2 border-gray-200 rounded-lg p-3" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder={selectedActivity === 'custom' ? 'Дополнительные детали...' : 'Добавьте заметку...'} />
+                <textarea className="w-full border-2 border-gray-200 rounded-lg p-3 min-h-[50.5px]" rows="3" value={formData.comment || ''} onChange={(e) => setFormData(prev => ({ ...prev, comment: e.target.value }))} placeholder={selectedActivity === 'custom' ? 'Дополнительные детали...' : 'Добавьте заметку...'} />
               </div>
             </div>
           </div>

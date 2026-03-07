@@ -474,7 +474,7 @@ const NotificationsView = ({
               <div>
                 <label className="block mb-2 font-medium">Сообщение (необязательно):</label>
                 <textarea
-                  className="w-full border-2 border-gray-200 rounded-lg p-3"
+                  className="w-full border-2 border-gray-200 rounded-lg p-3 min-h-[50.5px]"
                   rows="3"
                   value={formData.message}
                   onChange={(e) => setFormData(prev => ({ ...prev, message: e.target.value }))}
