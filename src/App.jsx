@@ -2576,6 +2576,18 @@ const ActivityTracker = () => {
                   <div>
                     <label className="block mb-2 font-medium">Количество (мл):</label>
                     <input type="number" className="w-full border-2 border-gray-200 rounded-lg p-3" value={formData.amount || ''} onChange={(e) => setFormData(prev => ({ ...prev, amount: e.target.value }))} placeholder="Введите количество мл" />
+                    <div className="flex overflow-x-auto gap-2 mt-2 pb-2 scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100">
+                      {[40, 80, 120, 160, 200, 240, 270].map((amount) => (
+                        <button
+                          key={amount}
+                          type="button"
+                          className="flex-shrink-0 whitespace-nowrap px-4 py-2 rounded-lg font-medium text-white transition-all bg-purple-600 active:scale-95"
+                          onClick={() => setFormData(prev => ({ ...prev, amount: amount.toString() }))}
+                        >
+                          {amount}
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
